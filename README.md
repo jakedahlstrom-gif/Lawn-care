@@ -64,6 +64,15 @@ Turn it on from the Winter pill on Today or in Settings. The app suggests it aft
 2. Tap **Share** → **Add to Home Screen** → **Add**.
 3. Open it once from the home screen while online so it caches itself. After that it works offline.
 
+The home-screen icon is saved when you add the app, so a new icon needs a fresh install. Removing the app from the home screen also deletes its data on the phone, so back up first:
+
+1. **Yard → gear → Export JSON backup**, and save it to Files.
+2. Remove Lawn Care from the home screen.
+3. Open the site in Safari, pull down to reload once, then **Share → Add to Home Screen**.
+4. Open the new icon, then **Yard → gear → Import JSON backup**. Reconnect Rachio in Yard → My Zones; the Worker address and password aren't in backups.
+
+Sharing the site's address shows the app icon as the link preview (Open Graph image `img/share.png`).
+
 ## Backups
 
 Data lives only on the phone, including saved Rachio runs. The Worker address and password stay out of backups. Use **Yard → gear → Export JSON backup** now and then; on iPhone it opens the share sheet so you can save to Files or iCloud Drive. **Import** replaces everything on the device with a backup.

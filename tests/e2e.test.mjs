@@ -430,7 +430,7 @@ test('Yard: collapsed sections, numeric-only Estimated badges, zones, rates; set
   await st.locator('[data-setting="profile.name"]').fill('Jacob');
   await st.locator('[data-setting="profile.name"]').press('Enter');
   await page.waitForTimeout(250);
-  await st.locator('[data-header-photo]').setInputFiles(join(ROOT, 'icons/icon-512.png'));
+  await st.locator('[data-header-photo]').setInputFiles(join(ROOT, 'icons/app-icon-512.png'));
   await page.waitForSelector('.toast:has-text("Header photo updated")');
   await closeSheet(page);
   assert.equal(await page.textContent('[data-testid="greeting"]'), 'Good morning, Jacob');
@@ -717,9 +717,16 @@ test('offline: service worker caches the app and it reopens without network', as
   await context.close();
 });
 
-test('manifest, icons and service worker asset list', async () => {
+test('manifest, icons, link preview and service worker asset list', async () => {
   const manifest = JSON.parse(await readFile(join(ROOT, 'manifest.webmanifest'), 'utf8'));
   assert.equal(manifest.display, 'standalone');
+  // Home-screen icon and link preview: files exist at the sizes the page declares.
+  const html = await readFile(join(ROOT, 'index.html'), 'utf8');
+  const size = async (f) => { const png = await readFile(join(ROOT, f)); return `${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`; };
+  assert.equal(await size(/rel="apple-touch-icon" sizes="180x180" href="([^"]+)"/.exec(html)[1]), '180x180');
+  const og = /property="og:image" content="https:\/\/jakedahlstrom-gif\.github\.io\/Lawn-care\/([^"]+)"/.exec(html)[1];
+  assert.equal(await size(og), '1200x630');
+  assert.match(html, /name="twitter:card" content="summary_large_image"/);
   for (const icon of manifest.icons) {
     const png = await readFile(join(ROOT, icon.src));
     assert.equal(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`, icon.sizes);

@@ -19,7 +19,7 @@ import {
   esc, fmtNum, fmtMoney, num, clone, round, getPath, dateStr, WEEKDAYS, nobreak, yearOf,
 } from '../util.js';
 
-export const APP_VERSION = '2.3.1';
+export const APP_VERSION = '2.4.0';
 const f0 = (n) => fmtNum(n, 0);
 const ui = { includePhotos: true };
 let hooks = { ctx: () => ({}), applyTheme: () => {}, onLocationChange: () => {}, setWinter: async () => {} };
