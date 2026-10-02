@@ -1,8 +1,8 @@
-// Service worker: caches the app shell so Lawn Care opens and works offline.
+// Service worker: caches the app shell so Lawn IQ opens and works offline.
 // Bump VERSION whenever any app file changes so phones pick up the update.
 
-const VERSION = '2.4.0';
-const CACHE = `lawn-care-${VERSION}`;
+const VERSION = '2.4.1';
+const CACHE = `lawn-care-${VERSION}`; // prefix kept from the app's first name so old caches get cleaned up
 const ASSETS = [
   './',
   'index.html',

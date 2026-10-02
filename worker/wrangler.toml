@@ -3,4 +3,4 @@ main = "src/index.js"
 compatibility_date = "2026-09-01"
 # Secrets (set in the Cloudflare dashboard, never in this file):
 #   RACHIO_API_KEY  your Rachio API key
-#   APP_PASSWORD    the shared password the Lawn Care app sends
+#   APP_PASSWORD    the shared password the Lawn IQ app sends

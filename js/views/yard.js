@@ -19,7 +19,7 @@ import {
   esc, fmtNum, fmtMoney, num, clone, round, getPath, dateStr, WEEKDAYS, nobreak, yearOf,
 } from '../util.js';
 
-export const APP_VERSION = '2.4.0';
+export const APP_VERSION = '2.4.1';
 const f0 = (n) => fmtNum(n, 0);
 const ui = { includePhotos: true };
 let hooks = { ctx: () => ({}), applyTheme: () => {}, onLocationChange: () => {}, setWinter: async () => {} };
@@ -356,12 +356,12 @@ export function openYardSection(id) {
 
 export async function doExport() {
   const data = await exportData({ includePhotos: ui.includePhotos });
-  const name = `lawn-care-backup-${dateStr()}.json`;
+  const name = `lawn-iq-backup-${dateStr()}.json`;
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
   const file = typeof File === 'function' ? new File([blob], name, { type: 'application/json' }) : null;
   if (file && navigator.canShare?.({ files: [file] }) && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
     try {
-      await navigator.share({ files: [file], title: 'Lawn Care backup' });
+      await navigator.share({ files: [file], title: 'Lawn IQ backup' });
       toast('Backup exported', { duration: 2500 });
       return;
     } catch (err) {
@@ -458,7 +458,7 @@ export function openSettingsSheet() {
       <p class="footer-note">All data lives only on this iPhone. Export a backup now and then (it can go to Files or iCloud Drive).</p>
       <h3 class="section-h">Reset</h3>
       <div class="reset-box">${holdButtonHtml('Hold to reset all data', { danger: true, hint: 'Deletes every log, product, zone and setting. Press and hold for 1 second.' })}</div>
-      <p class="footer-note center">Lawn Care ${APP_VERSION} · Weather by Open-Meteo</p>`;
+      <p class="footer-note center">Lawn IQ ${APP_VERSION} · Weather by Open-Meteo</p>`;
     const holdBtn = sheet.body.querySelector('[data-hold]');
     bindHold(holdBtn, async () => {
       await resetAll();

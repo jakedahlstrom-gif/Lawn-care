@@ -1,5 +1,5 @@
 // My Zones: Rachio zones matched to your lawn zones, each run's water and cost, and weekly and season totals.
-// Runs are fetched through the Lawn Care Worker and saved on this device as they arrive, so totals keep building
+// Runs are fetched through the Rachio Worker (worker/) and saved on this device as they arrive, so totals keep building
 // after a run drops out of Rachio's 7-day event history. The Worker address and password stay in this browser's
 // localStorage, so they never go into backups.
 
@@ -10,7 +10,7 @@ import { openSheet, toast } from '../ui.js';
 import { icon } from '../icons.js';
 import { esc, dateStr, fmtNum, fmtMoney, num } from '../util.js';
 
-const KEY = 'lawn-care-rachio';
+const KEY = 'lawn-care-rachio'; // kept from the app's first name so saved connections still work
 const DAY = 86400000;
 const SYNC_EVERY = 15 * 60 * 1000;
 
@@ -113,7 +113,7 @@ const MAX_RUNS = 25;
 
 function connectHtml(conn, error = '') {
   return `
-    <p class="footer-note">Connect to your Lawn Care Worker to count your Rachio runs. Enter the Worker address and the password you set as <b>APP_PASSWORD</b>.</p>
+    <p class="footer-note">Connect to your Rachio Worker to count your Rachio runs. Enter the Worker address and the password you set as <b>APP_PASSWORD</b>.</p>
     <div class="list-card">
       <div class="row field-row-y is-text"><label class="row-title" for="rachio-url">Worker address</label>
         <div class="input-wrap"><input id="rachio-url" class="row-input" type="url" autocomplete="off" autocapitalize="off" placeholder="https://lawn-care-rachio.you.workers.dev" value="${esc(conn?.url || '')}"></div></div>
