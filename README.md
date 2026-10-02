@@ -7,7 +7,7 @@ A mobile-first Progressive Web App for a Kentucky bluegrass lawn in Prior Lake, 
 - **Today**: a photo header (pick your own from the camera roll) with your target height, soil temperature, 7-day rain and the next feeding window. Below it are:
   - the Next Mow card (day, mower position, height, reason, and a rotating stripe-pattern icon);
   - Today, Tomorrow and Up Next task lists;
-  - Watering and Conditions cards;
+  - Watering and Conditions cards (Watering also shows whether the Rachio Worker saved on this device is connected);
   - the 16-day forecast. Tap any day for hourly detail and lawn verdicts (mow, spot spray, pull weeds, feed).
 - **Calendar**: the Scotts feeding plan (Halts → Turf Builder Lawn Food → optional summer → WinterGuard), spaced at least 4 weeks apart. Missed windows roll into the next one. It also has the season's tasks, the fall checklist (ticks itself off from your logs), a shopping list in whole bags, and a "Show past" toggle.
 - **History**: every log entry, newest first, with filters, edit and delete, plus season totals (mows, lb N per 1,000 sq ft, products, watering cost).

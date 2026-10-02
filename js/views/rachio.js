@@ -32,18 +32,20 @@ function setStatus(conn, state) {
   document.querySelectorAll('[data-rachio-status]').forEach((el) => { el.textContent = text; });
 }
 
-/** Status line for the saved Worker connection. Starts a check the first time a connection is seen. */
-export function rachioStatusText() {
+/** State of the saved Worker connection: off, checking, ok or error. Starts a check the first time a connection is seen. */
+export function rachioState() {
   const conn = loadConn();
-  if (!conn) return STATUS_TEXT.off;
+  if (!conn) return 'off';
   if (status?.key !== connKey(conn)) {
     status = { key: connKey(conn), state: 'checking' };
     call(conn, '/person/info').then(() => 'ok', () => 'error').then((state) => {
       if (status?.key === connKey(conn)) setStatus(conn, state);
     });
   }
-  return STATUS_TEXT[status.state];
+  return status.state;
 }
+
+export const rachioStatusText = () => STATUS_TEXT[rachioState()];
 
 async function call(conn, path) {
   const res = await fetch(conn.url.replace(/\/+$/, '') + path, { headers: { 'X-App-Password': conn.password } });
