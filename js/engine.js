@@ -7,6 +7,7 @@ import {
   fmtNum, fmtUntil, WEEKDAYS_LONG, maxDate, dateStr,
 } from './util.js';
 import { OTHER_KINDS, LEGACY_KIND_LABELS, MOW_PATTERNS, shortName } from './defaults.js';
+import { rachioWaterings, loggedDuplicates } from './irrigation.js';
 
 export const KC = 0.8; // crop coefficient for cool-season turf
 export const SUN_FACTOR = { full: 1, partial: 0.85, shade: 0.7 };
@@ -93,12 +94,16 @@ export function waterRateInfo(settings, zones) {
   const base = Math.max(0, w.baseUsage || 0);
   const total = base + periodIrr;
   const topIdx = tierIndex(total, tiers);
-  const auto = w.rateMode === 'auto' || w.rateMode == null;
+  if (w.rateMode === 'custom' && w.customRate > 0) {
+    // Your own all-in rate per 1,000 gallons (sewer included if you're billed for it).
+    return { idx: topIdx, topIdx, auto: false, custom: true, rate: w.customRate, sewer: 0, per1000: round(w.customRate, 4), weekly, periodIrr, base, total, blended: w.customRate, tiers };
+  }
+  const auto = w.rateMode === 'auto' || w.rateMode == null || w.rateMode === 'custom';
   const idx = auto ? topIdx : clamp(Number(w.rateMode) || 0, 0, tiers.length - 1);
   const rate = tiers[idx]?.rate || 0;
   const sewer = w.sewerWinter ? 0 : (w.sewerRate || 0);
   const blended = periodIrr > 0 ? ((tierCost(total, tiers) - tierCost(base, tiers)) / periodIrr) * 1000 : rate;
-  return { idx, topIdx, auto, rate, sewer, per1000: round(rate + sewer, 4), weekly, periodIrr, base, total, blended, tiers };
+  return { idx, topIdx, auto, custom: false, rate, sewer, per1000: round(rate + sewer, 4), weekly, periodIrr, base, total, blended, tiers };
 }
 
 /**
@@ -122,11 +127,35 @@ export function wateringCalc(zones, zoneIds, minutes, settings) {
 
 /** Inches of watering spread over the whole lawn (a run on part of the lawn counts proportionally). */
 export function lawnInchesFromLog(l, zones) {
+  if (l.lawnInches != null) return l.lawnInches; // Rachio runs carry their own, from Rachio's nozzle rate
   const total = lawnArea(zones);
   if (!(total > 0)) return 0;
   const sel = lawnZones(zones).filter((z) => (l.zones || []).includes(z.id) && z.precip > 0);
   return sum(sel, (z) => ((l.minutes || 0) * z.precip / 60) * z.sqft) / total;
 }
+
+/** Gallons for a watering entry: Rachio runs carry their own; logged runs use each zone's flow rate. */
+export const waterGallons = (l, zones) => (l.source === 'rachio' ? l.gallons || 0 : wateringCalc(zones, l.zones || [], l.minutes || 0).gallons);
+
+/**
+ * Every watering the lawn got: logged watering plus saved Rachio runs. A logged run that repeats a Rachio run (same
+ * day, zone and about the same minutes) counts once, from Rachio; the rest of that log still counts.
+ */
+export function allWatering(ctx) {
+  const rachio = rachioWaterings(ctx);
+  const logs = (ctx.logs || []).filter((l) => l.type === 'water');
+  if (!rachio.length) return logs;
+  const dup = loggedDuplicates(logs, rachio);
+  const kept = logs.flatMap((l) => {
+    if (!dup[l.id]) return [l];
+    const zonesLeft = (l.zones || []).filter((z) => !dup[l.id].includes(z));
+    return zonesLeft.length ? [{ ...l, zones: zonesLeft }] : [];
+  });
+  return [...kept, ...rachio];
+}
+
+/** allWatering, computed once per app snapshot (ctx.waterings) when available. */
+export const wateringsOf = (ctx) => ctx.waterings || allWatering(ctx);
 
 /* ======================= weather helpers ======================= */
 
@@ -278,12 +307,12 @@ export function growthPotential(tMeanF) {
   return Math.exp(-0.5 * ((c - 20) / 5.5) ** 2);
 }
 
-function growthModel(table, logs, zones, calib) {
+function growthModel(table, logs, waterings, zones, calib) {
   const index = {};
   table.forEach((d, i) => { index[d.date] = i; });
   const feedDates = logs.filter((l) => (l.effects?.nLbs || 0) > 0).map((l) => l.date);
   const watered = {};
-  for (const l of logs) if (l.type === 'water') watered[l.date] = (watered[l.date] || 0) + lawnInchesFromLog(l, zones);
+  for (const l of waterings) watered[l.date] = (watered[l.date] || 0) + lawnInchesFromLog(l, zones);
   const daily = (date) => {
     const i = index[date];
     if (i == null) return 0;
@@ -423,7 +452,7 @@ export function mowRecommendation(ctx) {
   const tableStart = addDays(last ? (last.date < addDays(today, -30) ? addDays(today, -30) : last.date) : today, -8);
   const table = dayTable(weather, tableStart, addDays(today, 18));
   const byDate = Object.fromEntries(table.map((d) => [d.date, d]));
-  const growth = growthModel(table, logs, zones, calib.factor);
+  const growth = growthModel(table, logs, wateringsOf(ctx), zones, calib.factor);
   const lastH = last ? (last.height ?? heights[(last.position || 5) - 1]) : season.target;
   const growthTo = (d) => (last ? growth.between(maxDate(last.date, addDays(today, -30)), d) : 0);
 
@@ -639,11 +668,12 @@ export function applicationWindow({ weather, product, zoneIds = [], zones, today
 
 /**
  * Good day to pull weeds: soil softened by rain (or watering) in the last two days, and not pouring today.
+ * `waterings` is the list from allWatering (logged watering and Rachio runs).
  */
-export function pullDay(weather, date, logs = [], zones = []) {
+export function pullDay(weather, date, waterings = [], zones = []) {
   const t = dayTable(weather, addDays(date, -2), date);
   const [d2, d1, d0] = t;
-  const watered = (d) => sum(logs.filter((l) => l.type === 'water' && l.date === d), (l) => lawnInchesFromLog(l, zones));
+  const watered = (d) => sum(waterings.filter((l) => l.type === 'water' && l.date === d), (l) => lawnInchesFromLog(l, zones));
   const recent = (d1.est ? 0 : d1.rain) + watered(d1.date) + 0.5 * ((d2.est ? 0 : d2.rain) + watered(d2.date));
   const sameDay = d0.est ? 0 : d0.rain;
   if (d0.tMax < 40) return { good: false, soft: false, note: 'Ground is cold or frozen' };
@@ -679,7 +709,7 @@ export function dayVerdicts(ctx, date) {
     const fd = fw.days.find((d) => d.date === date);
     if (fd) feed = fd.rating === 'avoid' ? { ok: false, text: `Hold off on feeding: ${fd.note.charAt(0).toLowerCase()}${fd.note.slice(1)}` } : { ok: true, text: 'Fine for feeding' };
   }
-  const p = pullDay(weather, date, logs, zones);
+  const p = pullDay(weather, date, wateringsOf(ctx), zones);
   const pull = { ok: p.good, text: p.good ? 'Good for pulling weeds' : p.note };
   let frost;
   if (day.tMin <= 28) frost = { level: 'hard', text: `Hard freeze (${f0(day.tMin)}°F)` };
@@ -724,29 +754,33 @@ export function activeTimers(logs, now) {
 /* ======================= watering ======================= */
 
 /**
- * Water the lawn received over the past 7 days: rainfall from the weather data plus manually logged
- * watering. Gallons and cost come from the zones' flow rates and the water rate tiers.
+ * Water the lawn received over the past 7 days: rainfall from the weather data, Rachio runs and logged watering.
+ * Gallons come from Rachio's nozzle rates (or the zones' flow rates for logged runs); cost uses your water rate.
  */
 export function waterWeek(ctx) {
-  const { today, now, settings, zones, logs, weather } = ctx;
+  const { today, now, settings, zones, weather } = ctx;
   const from = addDays(today, -6);
   const rain = rainSoFar(weather, from, today, now);
-  const runs = logs.filter((l) => l.type === 'water' && l.date >= from && l.date <= today);
+  const runs = wateringsOf(ctx).filter((l) => l.date >= from && l.date <= today);
+  const isRachio = (l) => l.source === 'rachio';
   const watered = sum(runs, (l) => lawnInchesFromLog(l, zones));
-  const gallons = sum(runs, (l) => wateringCalc(zones, l.zones || [], l.minutes || 0).gallons);
+  const sprinklers = sum(runs.filter(isRachio), (l) => lawnInchesFromLog(l, zones));
+  const gallons = sum(runs, (l) => waterGallons(l, zones));
   const rate = waterRateInfo(settings, zones);
   const cond = ctx.cond || conditions(ctx);
   return {
     total: rain + watered,
     rain,
     watered,
+    sprinklers,
+    logged: watered - sprinklers,
     runs: runs.length,
     gallons,
     cost: (gallons / 1000) * rate.per1000,
     rate,
     used: cond.etPast7,
     hasWeather: !!weather,
-    rachio: false,
+    rachio: runs.some(isRachio),
   };
 }
 
@@ -857,7 +891,8 @@ export function thisWeek(ctx) {
 
 /* ======================= totals ======================= */
 
-export function seasonTotals({ logs, zones, products, settings }, year) {
+export function seasonTotals(ctx, year) {
+  const { logs, zones, products, settings } = ctx;
   const yl = logs.filter((l) => yearOf(l.date) === year);
   const mows = yl.filter((l) => l.type === 'mow');
   const area = lawnArea(zones);
@@ -875,8 +910,8 @@ export function seasonTotals({ logs, zones, products, settings }, year) {
     if (p && p.size > 0) row.cost += (l.amount / p.size) * (p.price || 0);
     byProduct.set(key, row);
   }
-  const water = yl.filter((l) => l.type === 'water');
-  const gallons = sum(water, (l) => wateringCalc(zones, l.zones || [], l.minutes || 0).gallons);
+  const water = wateringsOf(ctx).filter((l) => yearOf(l.date) === year);
+  const gallons = sum(water, (l) => waterGallons(l, zones));
   const rate = waterRateInfo(settings, zones);
   return {
     mows: mows.length,
@@ -890,6 +925,7 @@ export function seasonTotals({ logs, zones, products, settings }, year) {
     sprays: yl.filter((l) => l.type === 'weed').length,
     pulls: yl.filter((l) => l.type === 'pull').length,
     waterings: water.length,
+    rachioRuns: water.filter((l) => l.source === 'rachio').length,
     waterGallons: gallons,
     waterCost: (gallons / 1000) * rate.per1000,
     others: yl.filter((l) => l.type === 'other').length,

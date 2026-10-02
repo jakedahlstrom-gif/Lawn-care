@@ -19,7 +19,7 @@ import {
   esc, fmtNum, fmtMoney, num, clone, round, getPath, dateStr, WEEKDAYS, nobreak, yearOf,
 } from '../util.js';
 
-export const APP_VERSION = '2.2.0';
+export const APP_VERSION = '2.3.0';
 const f0 = (n) => fmtNum(n, 0);
 const ui = { includePhotos: true };
 let hooks = { ctx: () => ({}), applyTheme: () => {}, onLocationChange: () => {}, setWinter: async () => {} };
@@ -124,7 +124,7 @@ const SECTIONS = {
   },
   water: {
     title: 'Water Rates', icon: 'dollar',
-    summary: () => { const r = E.waterRateInfo(S.settings, S.zones); return `Tier ${r.idx + 1} · ${fmtMoney(r.per1000)}/1,000 gal`; },
+    summary: () => { const r = E.waterRateInfo(S.settings, S.zones); return `${r.custom ? 'My rate' : `Tier ${r.idx + 1}`} · ${fmtMoney(r.per1000)}/1,000 gal`; },
     render: () => {
       const w = S.settings.water;
       const info = E.waterRateInfo(S.settings, S.zones);
@@ -152,12 +152,13 @@ const SECTIONS = {
           ${segmented('water.billing', [['monthly', 'Monthly'], ['bimonthly', 'Bimonthly'], ['quarterly', 'Quarterly']], w.billing)}</div>
         ${inputRow('Non-irrigation use per bill', 'water.baseUsage', { unit: 'gal' })}
         ${inputRow('Typical summer watering', 'water.summerInches', { unit: 'in/wk' })}
-        <div class="row field-row-y col"><div class="row-main"><span class="row-title">Charge irrigation at</span><span class="row-sub">Auto uses the top tier your summer bill reaches.</span></div>
-          ${segmented('water.rateMode', [['auto', 'Auto'], ...tiers.map((_, i) => [String(i), `Tier ${i + 1}`])], w.rateMode ?? 'auto')}</div>
+        <div class="row field-row-y col"><div class="row-main"><span class="row-title">Charge irrigation at</span><span class="row-sub">Auto uses the top tier your summer bill reaches. My rate uses your own cost per 1,000 gallons.</span></div>
+          ${segmented('water.rateMode', [['auto', 'Auto'], ...tiers.map((_, i) => [String(i), `Tier ${i + 1}`]), ['custom', 'My rate']], w.rateMode ?? 'auto')}</div>
+        ${w.rateMode === 'custom' ? inputRow('My rate', 'water.customRate', { unit: '$/1k', sub: 'All-in, including any sewer charge' }) : ''}
       </div>
       <div class="card inset-card" data-testid="water-summary">
         <p><strong>Summer bill ≈ ${f0(info.base)} + ${f0(info.periodIrr)} gal irrigation = ${f0(info.total)} gal</strong>, which reaches Tier ${info.topIdx + 1}.</p>
-        <p>Irrigation is charged at <strong data-testid="irrigation-rate">${fmtMoney(info.per1000)}/1,000 gal</strong>${info.auto ? ' (your top tier)' : ` (Tier ${info.idx + 1}, set manually)`}${info.sewer ? ', including sewer' : ''}. One inch on the lawn ≈ ${f0(inch1)} gal ≈ <strong>${fmtMoney((inch1 / 1000) * info.per1000)}</strong>.</p>
+        <p>Irrigation is charged at <strong data-testid="irrigation-rate">${fmtMoney(info.per1000)}/1,000 gal</strong>${info.custom ? ' (your rate)' : info.auto ? ' (your top tier)' : ` (Tier ${info.idx + 1}, set manually)`}${info.sewer ? ', including sewer' : ''}. One inch on the lawn ≈ ${f0(inch1)} gal ≈ <strong>${fmtMoney((inch1 / 1000) * info.per1000)}</strong>.</p>
       </div>${provNote}`;
     },
   },
@@ -206,7 +207,7 @@ export function renderYard(el, c) {
     <div class="list-card">
       <button type="button" class="row row-btn sec-rachio" data-action="my-zones">
         <span class="sec-ic">${icon('water')}</span>
-        <span class="row-main"><span class="row-title">My Zones</span><span class="row-sub">Live from Rachio</span></span>
+        <span class="row-main"><span class="row-title">My Zones</span><span class="row-sub">Rachio runs, gallons and cost</span></span>
         ${icon('chev', 'chev')}
       </button>
     </div>
