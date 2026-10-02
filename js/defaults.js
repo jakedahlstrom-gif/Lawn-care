@@ -76,8 +76,10 @@ export function defaultSettings() {
       billing: 'monthly',
       baseUsage: 5000,
       summerInches: 0.75,
-      rateMode: 'auto',
+      rateMode: 'auto', // 'auto', a tier index, or 'custom' (customRate)
+      customRate: 0,
     },
+    rachio: { zoneMap: {}, rates: {} }, // Rachio zone id → app zone id ('none' = don't count); nozzle in/hr you entered
     mowing: { cadenceDays: 7, preferredDays: [6, 0] },
     nitrogen: { seasonTarget: 3.0 },
     appearance: { theme: 'system' },
@@ -98,6 +100,7 @@ export function defaultSettings() {
       'water.sewerRate': 'est',
       'water.baseUsage': 'est',
       'water.summerInches': 'est',
+      'water.customRate': 'meas',
       'nitrogen.seasonTarget': 'est',
     },
   };

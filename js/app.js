@@ -13,7 +13,7 @@ import { renderCalendar, openFeedingSheet, openTaskSheet } from './views/calenda
 import { renderHistory, historyState } from './views/history.js';
 import { openDaySheet } from './views/forecast.js';
 import * as Yard from './views/yard.js';
-import { openMyZones } from './views/rachio.js';
+import { openMyZones, syncRachio } from './views/rachio.js';
 
 const VIEWS = { today: renderToday, calendar: renderCalendar, history: renderHistory, yard: Yard.renderYard };
 const ALIASES = { plan: 'calendar' };
@@ -33,8 +33,11 @@ export function ctx() {
     zones: S.zones,
     products: S.products,
     logs: S.logs,
+    runs: S.runs,
+    rachio: S.rachio,
     weather: S.weather,
   };
+  c.waterings = E.allWatering(c);
   c.cond = E.conditions(c);
   c.feedings = Season.feedingSchedule(c);
   c.seasonTasks = Season.seasonTasks(c);
@@ -238,10 +241,10 @@ function wireEvents() {
 
   window.addEventListener('hashchange', () => switchTab(location.hash.slice(1)));
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') { render(); refreshWeather(); }
+    if (document.visibilityState === 'visible') { render(); refreshWeather(); syncRachio().catch(() => {}); }
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', applyTheme);
-  window.addEventListener('online', () => refreshWeather({ force: true }));
+  window.addEventListener('online', () => { refreshWeather({ force: true }); syncRachio().catch(() => {}); });
   setInterval(() => { if (document.visibilityState === 'visible') render(); }, 60 * 1000);
 }
 
@@ -282,6 +285,7 @@ async function boot() {
   navigator.storage?.persist?.().catch(() => {});
   registerSW();
   refreshWeather();
+  syncRachio().catch(() => {});
 }
 
 boot();

@@ -595,8 +595,19 @@ test('migration: v1 data survives the upgrade', async () => {
   await context.close();
 });
 
-test('backup: export JSON, reset, import restores (photos and header included)', async () => {
-  const { page, errors, context } = await open({ path: '#yard' });
+test('backup: export JSON, reset, import restores (photos, header and Rachio runs included)', async () => {
+  // A Rachio run saved on the phone before the backup.
+  const seed = () => new Promise((res, rej) => {
+    const r = indexedDB.open('lawncare', 2);
+    r.onupgradeneeded = () => ['kv', 'zones', 'products', 'logs', 'photos', 'runs'].forEach((n) => r.result.createObjectStore(n, n === 'kv' ? undefined : { keyPath: 'id' }));
+    r.onsuccess = () => {
+      const t = r.result.transaction('runs', 'readwrite');
+      t.objectStore('runs').put({ id: 'rachio-e2', deviceId: 'd1', zoneId: 'rz1', zoneNumber: 1, zoneName: 'Front Left', start: Date.parse('2026-09-28T06:00:00-05:00'), end: Date.parse('2026-09-28T06:20:00-05:00'), date: '2026-09-28', seconds: 1200, planned: 1200, stoppedEarly: false });
+      t.oncomplete = () => { r.result.close(); res(); };
+      t.onerror = () => rej(t.error);
+    };
+  });
+  const { page, errors, context } = await open({ path: '#yard', seed });
   await openLog(page, 'Mow');
   await save(page, 'Mow logged');
   await page.click('.view.active [data-action="settings"]');
@@ -611,9 +622,11 @@ test('backup: export JSON, reset, import restores (photos and header included)',
   assert.equal(data.schema, 2);
   assert.equal(data.logs.length, 1);
   assert.equal(data.products.length, 6);
+  assert.deepEqual(data.runs.map((r) => r.id), ['rachio-e2']);
   await hold(page, 1150, '.settings-sheet .hold-btn');
   await page.waitForSelector('.toast:has-text("All data reset")');
   assert.equal((await idb(page, 'logs')).length, 0);
+  assert.equal((await idb(page, 'runs')).length, 0);
   await page.click('.view.active [data-action="settings"]');
   await guard(page);
   const bad = join(dir, 'bad.json');
@@ -625,6 +638,7 @@ test('backup: export JSON, reset, import restores (photos and header included)',
   await page.click('.dialog [data-v="1"]');
   await page.waitForSelector('.toast:has-text("Backup restored")');
   assert.equal((await idb(page, 'logs')).length, 1);
+  assert.equal((await idb(page, 'runs')).length, 1);
   assert.deepEqual(errors, []);
   await context.close();
 });
@@ -707,44 +721,114 @@ test('manifest, icons and service worker asset list', async () => {
   for (const f of [...files, 'index.html', 'manifest.webmanifest']) assert.ok(listed.has(f), `sw.js is missing ${f}`);
 });
 
-test('My Zones connects to the Worker and shows Rachio zones and events', async () => {
-  const { page, errors, context } = await open({ path: '#yard' });
-  const W = 'https://rachio.example.workers.dev';
-  const now = Date.parse('2026-10-01T06:00:00-05:00');
-  await context.route(`${W}/**`, (r) => {
+// Rachio Worker mock: three lawn zones and a drip zone, and Thursday morning's runs (Front Right stopped early).
+const RW = 'https://rachio.example.workers.dev';
+const rachioAt = (s) => Date.parse(`${s}:00-05:00`);
+const zev = (id, subType, zone, time, summary) => ({ id, type: 'ZONE_STATUS', subType, eventDate: rachioAt(time), summary, eventDatas: [{ key: 'zoneNumber', convertedValue: String(zone) }] });
+const RACHIO_ZONES = [
+  { id: 'rz1', zoneNumber: 1, name: 'Front Left Lawn', enabled: true, customNozzle: { name: 'Rotor', inchesPerHour: 0.6 }, lastWateredDate: rachioAt('2026-10-01T06:20'), lastWateredDuration: 1200 },
+  { id: 'rz2', zoneNumber: 2, name: 'Front Right', enabled: true, customNozzle: { name: 'Rotor', inchesPerHour: 0.6 } },
+  { id: 'rz3', zoneNumber: 3, name: 'Zone 3', enabled: true, customNozzle: { name: 'Fixed Spray Head', inchesPerHour: 0 } },
+  { id: 'rz7', zoneNumber: 7, name: 'Garden drip', enabled: true, customNozzle: { name: 'Drip', inchesPerHour: 0.5 } },
+  { id: 'rz8', zoneNumber: 8, name: 'Unused', enabled: false },
+];
+const RACHIO_EVENTS = [
+  zev('e1', 'ZONE_STARTED', 1, '2026-10-01T06:00', 'Front Left Lawn began watering at 06:00 AM for 20 minutes.'),
+  zev('e2', 'ZONE_COMPLETED', 1, '2026-10-01T06:20', 'Front Left Lawn completed watering at 06:20 AM for 20 minutes.'),
+  zev('e3', 'ZONE_STARTED', 2, '2026-10-01T06:21', 'Front Right began watering at 06:21 AM for 20 minutes.'),
+  zev('e4', 'ZONE_STOPPED', 2, '2026-10-01T06:28', 'Front Right stopped watering at 06:28 AM for 20 minutes.'),
+  zev('e5', 'ZONE_STARTED', 3, '2026-10-01T06:30', 'Zone 3 began watering at 06:30 AM for 10 minutes.'),
+  zev('e6', 'ZONE_COMPLETED', 3, '2026-10-01T06:40', 'Zone 3 completed watering at 06:40 AM for 10 minutes.'),
+  { id: 'e7', type: 'SCHEDULE_STATUS', subType: 'SCHEDULE_COMPLETED', eventDate: rachioAt('2026-10-01T06:41'), summary: 'Morning completed watering for 37 minutes.' },
+];
+function rachioWorker(context, state = { events: RACHIO_EVENTS }) {
+  return context.route(`${RW}/**`, (r) => {
     const req = r.request();
     const u = new URL(req.url());
     const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'X-App-Password' };
     if (req.method() === 'OPTIONS') return r.fulfill({ status: 204, headers });
     if (req.headers()['x-app-password'] !== 'pw') return r.fulfill({ status: 401, headers, json: { error: 'Wrong password' } });
     if (u.pathname === '/person/info') return r.fulfill({ headers, json: { id: 'p1' } });
-    if (u.pathname === '/person/p1') {
-      return r.fulfill({
-        headers,
-        json: { devices: [{ id: 'd1', name: 'Rachio 3', status: 'ONLINE', zones: [
-          { zoneNumber: 2, name: 'Back yard', enabled: true, lastWateredDate: now, lastWateredDuration: 1200 },
-          { zoneNumber: 1, name: 'Front yard', enabled: true },
-          { zoneNumber: 3, name: 'Unused', enabled: false },
-        ] }] },
-      });
-    }
-    if (u.pathname === '/device/d1/event') return r.fulfill({ headers, json: [{ eventDate: now, summary: 'Back yard completed watering' }] });
+    if (u.pathname === '/person/p1') return r.fulfill({ headers, json: { devices: [{ id: 'd1', name: 'Rachio 3', status: 'ONLINE', zones: RACHIO_ZONES }] } });
+    if (u.pathname === '/device/d1/event') return r.fulfill({ headers, json: state.events });
     return r.fulfill({ status: 404, headers, json: {} });
   });
+}
+
+test('My Zones: Rachio runs counted automatically, zone matching, nozzle rates, gallons and cost, saved without duplicates', async () => {
+  const state = { events: RACHIO_EVENTS };
+  const { page, errors, context } = await open({ path: '#yard', setup: (ctx) => rachioWorker(ctx, state) });
   await page.click('.view.active [data-action="my-zones"]');
   await guard(page);
-  await sheet(page).locator('#rachio-url').fill(W);
+  await sheet(page).locator('#rachio-url').fill(RW);
   await sheet(page).locator('#rachio-pw').fill('bad');
   await sheet(page).locator('[data-act="connect"]').click();
   await sheet(page).getByText('Wrong password').waitFor();
   await sheet(page).locator('#rachio-pw').fill('pw');
   await sheet(page).locator('[data-act="connect"]').click();
-  const zones = sheet(page).locator('[data-testid="rachio-zones"] .row-title');
-  await zones.first().waitFor();
-  assert.deepEqual(await zones.allTextContents(), ['1. Front yard', '2. Back yard']);
-  assert.match(await sheet(page).textContent(), /Back yard completed watering/);
-  assert.match(await sheet(page).textContent(), /20 min/);
+  await sheet(page).locator('[data-testid="rachio-totals"]').waitFor();
+
+  // Zones: matched by name or number, Rachio's nozzle rate by default, a prompt where Rachio has none.
+  const zone = (id) => sheet(page).locator(`.rz-zone[data-rz="${id}"]`);
+  assert.deepEqual(await sheet(page).locator('.rz-head .row-title').allTextContents(), ['1. Front Left Lawn', '2. Front Right', '3. Zone 3', '7. Garden drip']);
+  assert.equal(await zone('rz1').locator('[data-testid="match-how"]').textContent(), 'Matched by name');
+  assert.equal(await zone('rz1').locator('select').inputValue(), '');
+  assert.match(await zone('rz1').locator('select option:checked').textContent(), /Auto: Front Left/);
+  assert.match(await zone('rz1').textContent(), /Nozzle 0\.6 in\/hr from Rachio · Rotor/);
+  assert.equal(await zone('rz3').locator('[data-testid="match-how"]').textContent(), 'Matched by zone number');
+  assert.match(await zone('rz3').textContent(), /Needs nozzle rate.*Using 1\.5 in\/hr from Side Left until you enter one/s);
+  assert.equal(await zone('rz1').locator('[data-nozzle]').count(), 0);
+  assert.match(await zone('rz7').textContent(), /Not matched — pick a zone to count it/);
+
+  // Runs: actual minutes (the stopped run counts 7 of its 20), with gallons and cost each.
+  const runs = sheet(page).locator('[data-testid="rachio-runs"] .rz-run');
+  assert.equal(await runs.count(), 3);
+  assert.match(await runs.nth(1).textContent(), /Front Right.*stopped early.*7 min of 20 min · 0\.07″.*55 gal.*\$0\.33/s);
+  assert.match(await runs.nth(2).textContent(), /Front Left Lawn.*20 min · 0\.2″.*156 gal.*\$0\.94/s);
+  assert.equal(await sheet(page).locator('[data-testid="rachio-week"]').textContent(), '335 gal');
+  assert.equal(await zone('rz1').locator('[data-testid="zone-season"]').textContent(), '156 gal · $0.94');
   assert.deepEqual(await overflow(page, '.sheet-wrap:last-child .sheet'), []);
+
+  // Enter the missing nozzle rate; fix a mismatch; enter your own water rate.
+  await zone('rz3').locator('[data-nozzle]').fill('1.2');
+  await zone('rz3').locator('[data-nozzle]').press('Enter');
+  await zone('rz3').locator('[data-testid="zone-week"]').getByText('100 gal · $0.60').waitFor();
+  assert.doesNotMatch(await zone('rz3').textContent(), /Needs nozzle rate/);
+  await zone('rz3').locator('select').selectOption('z4');
+  await zone('rz3').locator('[data-testid="match-how"]').getByText('You picked this').waitFor();
+  await sheet(page).locator('[data-water-rate]').fill('5');
+  await sheet(page).locator('[data-water-rate]').press('Enter');
+  await sheet(page).locator('[data-testid="rachio-totals"]').getByText('$1.55 · 3 runs').first().waitFor();
+  const s = await settingsOf(page);
+  assert.deepEqual(s.rachio, { zoneMap: { rz3: 'z4' }, rates: { rz3: 1.2 } });
+  assert.equal(s.water.rateMode, 'custom');
+  assert.equal(s.water.customRate, 5);
+
+  // Saved on the phone: refreshing adds no duplicates, and runs stay after they leave Rachio's 7-day history.
+  assert.equal((await idb(page, 'runs')).length, 3);
+  await sheet(page).locator('[data-act="refresh"]').click();
+  await page.waitForTimeout(400);
+  assert.equal((await idb(page, 'runs')).length, 3);
+  state.events = [];
+  await sheet(page).locator('[data-act="refresh"]').click();
+  await page.waitForTimeout(400);
+  assert.equal((await idb(page, 'runs')).length, 3);
+  assert.equal(await sheet(page).locator('[data-testid="rachio-season"]').textContent(), '310 gal');
+  await closeSheet(page);
+
+  // Today counts the runs; the Watering log says to log only hand watering; History totals include them.
+  await tab(page, 'today');
+  assert.match(await page.textContent('[data-testid="water-split"]'), /^Rain 0\.4″ · Rachio 0\.07″$/);
+  assert.match(await page.textContent('[data-testid="water"]'), /310 gal · \$1\.55.*Rachio connected/s);
+  await openLog(page, 'Watering');
+  assert.equal(await sheet(page).locator('[data-testid="water-log-note"]').textContent(), 'Rachio runs are now counted automatically. Only log hand watering here. Gallons use each zone’s flow rate.');
+  await closeSheet(page);
+  await tab(page, 'history');
+  assert.equal(await page.textContent('[data-testid="total-water"]'), '$1.55');
+  assert.match(await page.textContent('[data-testid="totals"]'), /310 gal watered \(3 Rachio runs\)/);
+  await tab(page, 'today');
+  await page.click('[data-testid="water"]');
+  await sheet(page).locator('[data-testid="rachio-totals"]').waitFor();
   assert.deepEqual(errors.filter((e) => !/401/.test(e)), []);
   await context.close();
 });
@@ -764,7 +848,7 @@ test('Today shows the saved Rachio Worker connection status', async () => {
   let { page, errors, context } = await open({ setup, seed: save('pw') });
   await status(page).getByText('Rachio connected').waitFor();
   await openLog(page, 'Watering');
-  assert.match(await sheet(page).textContent(), /Rachio runs show in Yard → My Zones/);
+  assert.match(await sheet(page).textContent(), /Rachio runs are now counted automatically\. Only log hand watering here\./);
   assert.deepEqual(errors, []);
   await context.close();
 

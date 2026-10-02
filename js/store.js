@@ -4,6 +4,7 @@
 import * as db from './db.js';
 import { defaultSettings, defaultZones, defaultProducts, defaultPlanProducts, SCHEMA } from './defaults.js';
 import { computeTimers } from './engine.js';
+import { newRuns } from './irrigation.js';
 import { clone, uid, round, setPath } from './util.js';
 
 export const S = {
@@ -12,6 +13,8 @@ export const S = {
   products: [],
   logs: [],
   headerPhoto: null, // { dataUrl, tone }
+  runs: [], // Rachio runs saved as they're fetched
+  rachio: null, // { fetchedAt, zones } from the last Rachio sync
   weather: null,
   weatherState: 'idle', // idle | loading | ok | error
   weatherError: null,
@@ -130,6 +133,8 @@ export async function load() {
   S.products = [...products.map((p) => fixed.get(p.id) || p), ...fixes.filter((p) => !products.some((x) => x.id === p.id))].sort(byOrder);
   S.zones = (await db.getAll('zones')).sort(byOrder);
   S.logs = await db.getAll('logs');
+  S.runs = await db.getAll('runs');
+  S.rachio = (await db.get('kv', 'rachio')) || null;
   S.headerPhoto = (await db.get('kv', 'headerPhoto')) || null;
   emit('load');
 }
@@ -278,6 +283,24 @@ export async function restoreLog({ log, photo }) {
   return saveLog(copy);
 }
 
+/* ---------- Rachio ---------- */
+
+/**
+ * Save the latest Rachio zones and any runs not saved yet. Runs are never overwritten or duplicated, so season
+ * totals keep building after a run drops out of Rachio's 7-day event window. Returns the new runs.
+ */
+export async function saveRachio(snapshot, runs) {
+  const fresh = newRuns(S.runs, runs);
+  await db.tx(['kv', 'runs'], (st) => {
+    if (snapshot) st('kv').put(snapshot, 'rachio');
+    fresh.forEach((r) => st('runs').put(r));
+  });
+  if (snapshot) S.rachio = snapshot;
+  if (fresh.length) S.runs = [...S.runs, ...fresh];
+  emit('runs');
+  return fresh;
+}
+
 /* ---------- photos ---------- */
 
 export async function savePhoto(dataUrl) {
@@ -299,6 +322,8 @@ export async function exportData({ includePhotos = true } = {}) {
     zones: S.zones,
     products: S.products,
     logs: S.logs,
+    runs: S.runs,
+    rachio: S.rachio,
     photos: includePhotos ? await db.getAll('photos') : [],
     headerPhoto: includePhotos ? S.headerPhoto : null,
   };
@@ -318,13 +343,17 @@ export function validateBackup(obj) {
 export async function importData(obj) {
   validateBackup(obj);
   const photos = Array.isArray(obj.photos) ? obj.photos.filter((p) => p && p.id && p.dataUrl) : [];
-  await db.tx(['kv', 'zones', 'products', 'logs', 'photos'], (st) => {
-    ['zones', 'products', 'logs', 'photos'].forEach((n) => st(n).clear());
+  const runs = Array.isArray(obj.runs) ? obj.runs.filter((r) => r && typeof r.id === 'string' && r.zoneId && r.seconds > 0) : [];
+  await db.tx(['kv', 'zones', 'products', 'logs', 'photos', 'runs'], (st) => {
+    ['zones', 'products', 'logs', 'photos', 'runs'].forEach((n) => st(n).clear());
     st('kv').put(obj.settings, 'settings');
     obj.zones.forEach((z) => st('zones').put(z));
     obj.products.forEach((p) => st('products').put(p));
     obj.logs.forEach((l) => st('logs').put(l));
     photos.forEach((p) => st('photos').put(p));
+    runs.forEach((r) => st('runs').put(r));
+    if (obj.rachio?.zones) st('kv').put(obj.rachio, 'rachio');
+    else st('kv').delete('rachio');
     if (obj.headerPhoto?.dataUrl) st('kv').put(obj.headerPhoto, 'headerPhoto');
     else st('kv').delete('headerPhoto');
   });

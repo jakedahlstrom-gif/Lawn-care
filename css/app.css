@@ -1381,3 +1381,29 @@ html.sheet-open #toast-root { bottom: calc(118px + env(safe-area-inset-bottom));
   .pos-n { font-size: 17px; }
   .field-row .seg { min-width: 130px; }
 }
+
+/* ---------- My Zones (Rachio) ---------- */
+
+.tag-warn { background: var(--orange-soft); color: var(--orange); }
+.rz-card { margin-top: 4px; }
+.rz-tot { display: flex; flex-direction: column; padding: 10px 12px; border-radius: 14px; background: var(--card-2); min-width: 0; }
+.rz-zone { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; }
+.rz-zone + .rz-zone::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; border-top: 0.5px solid var(--sep); }
+.rz-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.rz-head .row-title { font-weight: 600; }
+.rz-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.rz-label { font-size: 15px; color: var(--text-2); }
+.rz-select {
+  flex: 1 1 160px;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--fill);
+  font-size: 16px;
+}
+.rz-select:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.rz-stats { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--text-2); }
+.rz-stats b { color: var(--text); font-weight: 600; }
+.rz-run .row-value { font-size: 14px; line-height: 1.35; }

@@ -2,6 +2,7 @@
 
 import { S } from '../store.js';
 import * as E from '../engine.js';
+import { rachioWaterings, loggedDuplicates } from '../irrigation.js';
 import { icon, TYPE_ICON } from '../icons.js';
 import { segmented } from '../ui.js';
 import { MOW_PATTERNS, shortName } from '../defaults.js';
@@ -22,7 +23,7 @@ function title(l) {
   return l.title || E.otherLabel(l.kind);
 }
 
-function subtitle(l) {
+function subtitle(l, dupes) {
   const zones = S.zones.filter((z) => (l.zones || []).includes(z.id));
   const lawn = E.lawnZones(S.zones);
   const zoneText = !zones.length ? '' : (lawn.length && lawn.every((z) => l.zones.includes(z.id)) && zones.length === lawn.length)
@@ -46,6 +47,7 @@ function subtitle(l) {
   if (l.type === 'water') {
     const calc = E.wateringCalc(S.zones, l.zones || [], l.minutes || 0, S.settings);
     bits.push(`${fmtNum(calc.inches, 2)}″`, `${fmtNum(calc.gallons, 0)} gal`, fmtMoney(calc.cost));
+    if (dupes?.[l.id]) bits.push('also recorded by Rachio, counted once');
   }
   return bits.filter(Boolean).join(' · ');
 }
@@ -64,7 +66,7 @@ function totalsHtml(c, year) {
     <div class="nbar" role="img" aria-label="Nitrogen ${fmtNum(t.nPer1000, 2)} of ${fmtNum(t.target, 1)} pounds per 1,000 square feet target">
       <span class="nbar-applied" style="width:${appliedPct}%"></span><span class="nbar-mulch" style="width:${Math.max(0, pct - appliedPct)}%"></span>
     </div>
-    <p class="hint">${fmtNum(t.nPer1000, 2)} lb N per 1,000 sq ft applied${t.mulchCredit > 0 ? `, plus ~${fmtNum(t.mulchCredit, 2)} returned by mulched clippings` : ''}, toward a ${fmtNum(t.target, 1)} lb season target. ${fmtNum(t.hours, 1)} mowing hours · ${t.sprays} spot sprays · ${t.pulls} weeding sessions · ${fmtNum(t.waterGallons, 0)} gal watered.</p>
+    <p class="hint">${fmtNum(t.nPer1000, 2)} lb N per 1,000 sq ft applied${t.mulchCredit > 0 ? `, plus ~${fmtNum(t.mulchCredit, 2)} returned by mulched clippings` : ''}, toward a ${fmtNum(t.target, 1)} lb season target. ${fmtNum(t.hours, 1)} mowing hours · ${t.sprays} spot sprays · ${t.pulls} weeding sessions · ${fmtNum(t.waterGallons, 0)} gal watered${t.rachioRuns ? ` (${t.rachioRuns} Rachio ${t.rachioRuns === 1 ? 'run' : 'runs'})` : ''}.</p>
     ${t.products.length ? `<div class="used">
       <div class="used-h">Products used</div>
       ${t.products.map((p) => `<div class="used-row"><span>${esc(nobreak(p.name))}</span><span>${fmtNum(p.amount, 1)} ${esc(p.unit)} · ${p.apps}×${p.cost > 0 ? ` · ${fmtMoney(p.cost)}` : ''}</span></div>`).join('')}
@@ -80,6 +82,7 @@ export function renderHistory(el, c) {
   const year = historyState.year;
   const f = historyState.filter;
   const logs = E.sortLogs(S.logs.filter((l) => yearOf(l.date) === year && matches(l, f)));
+  const dupes = c.runs?.length ? loggedDuplicates(logs, rachioWaterings(c)) : {};
   const groups = [];
   for (const l of logs) {
     const key = l.date.slice(0, 7);
@@ -99,7 +102,7 @@ export function renderHistory(el, c) {
       <div class="list-card">${g.items.map((l) => `
         <button type="button" class="row row-btn log-row" data-action="edit-log" data-id="${l.id}">
           <span class="log-ic t-${l.type}">${icon(TYPE_ICON[l.type] || 'dots')}</span>
-          <span class="row-main"><span class="row-title">${esc(nobreak(title(l)))}</span><span class="row-sub">${esc(subtitle(l))}${l.notes ? ` · “${esc(l.notes.length > 48 ? `${l.notes.slice(0, 48)}…` : l.notes)}”` : ''}${l.photoId ? ` · ${icon('camera', 'inline-ic')}` : ''}</span></span>
+          <span class="row-main"><span class="row-title">${esc(nobreak(title(l)))}</span><span class="row-sub">${esc(subtitle(l, dupes))}${l.notes ? ` · “${esc(l.notes.length > 48 ? `${l.notes.slice(0, 48)}…` : l.notes)}”` : ''}${l.photoId ? ` · ${icon('camera', 'inline-ic')}` : ''}</span></span>
           <span class="row-date">${esc(fmtDay(l.date).replace(/^\w+, /, ''))}</span>${icon('chev', 'chev')}
         </button>`).join('')}</div>`).join('') : `
       <div class="empty">

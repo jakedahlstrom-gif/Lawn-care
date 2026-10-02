@@ -10,7 +10,7 @@ import { describeCode } from '../weather.js';
 import { MOW_PATTERNS } from '../defaults.js';
 import { onLongPress, popover } from '../ui.js';
 import { renderWinter } from './winter.js';
-import { rachioStatusText } from './rachio.js';
+import { rachioStatusText, rachioState } from './rachio.js';
 import { esc, fmtDay, fmtNum, fmtMoney, fmtTime, fmtMonthDay, daysBetween, WEEKDAYS, nobreak } from '../util.js';
 
 const f0 = (n) => fmtNum(n, 0);
@@ -157,14 +157,19 @@ function weekHtml(wk, alerts) {
 
 function waterCardHtml(c) {
   const w = E.waterWeek(c);
-  return `<div class="card mini water-card" data-testid="water">
-    <div class="mini-kicker">${icon('drop')}<span>Watering</span></div>
-    <div class="mini-big"><span data-testid="water-total">${fmtNum(w.total, 2)}″</span></div>
-    <div class="mini-sub">past 7 days</div>
-    <div class="mini-lines">Rain ${fmtNum(w.rain, 2)}″ · Logged ${fmtNum(w.watered, 2)}″</div>
-    <div class="mini-lines">${f0(w.gallons)} gal · ${fmtMoney(w.cost)}</div>
-    <div class="mini-note" data-rachio-status data-testid="rachio-status">${esc(rachioStatusText())}</div>
-  </div>`;
+  const status = rachioStatusText();
+  const rachioOn = w.rachio || rachioState() !== 'off';
+  const parts = [`Rain ${fmtNum(w.rain, 2)}″`];
+  if (rachioOn) parts.push(`Rachio ${fmtNum(w.sprinklers, 2)}″`);
+  if (!rachioOn || w.logged > 0) parts.push(`${rachioOn ? 'Hand' : 'Logged'} ${fmtNum(w.logged, 2)}″`);
+  return `<button type="button" class="card mini water-card" data-action="my-zones" data-testid="water">
+    <span class="mini-kicker">${icon('drop')}<span>Watering</span></span>
+    <span class="mini-big"><span data-testid="water-total">${fmtNum(w.total, 2)}″</span></span>
+    <span class="mini-sub">past 7 days</span>
+    <span class="mini-lines" data-testid="water-split">${parts.join(' · ')}</span>
+    <span class="mini-lines">${f0(w.gallons)} gal · ${fmtMoney(w.cost)}</span>
+    <span class="mini-note" data-rachio-status data-testid="rachio-status">${esc(status)}</span>
+  </button>`;
 }
 
 function condCardHtml(c, rain7) {

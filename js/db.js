@@ -1,8 +1,8 @@
 // Thin promise wrapper around IndexedDB. Everything lives on the device.
 
 const DB_NAME = 'lawncare';
-const DB_VERSION = 1;
-export const STORES = ['kv', 'zones', 'products', 'logs', 'photos'];
+const DB_VERSION = 2; // 2: Rachio runs
+export const STORES = ['kv', 'zones', 'products', 'logs', 'photos', 'runs'];
 
 let dbPromise = null;
 
@@ -18,7 +18,11 @@ export function openDB() {
           }
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        // Let a newer version of the app (in another tab) upgrade the database instead of being blocked.
+        req.result.onversionchange = () => req.result.close();
+        resolve(req.result);
+      };
       req.onerror = () => reject(req.error);
       req.onblocked = () => reject(new Error('Database is blocked by another open tab.'));
     });

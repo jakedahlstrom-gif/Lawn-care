@@ -15,7 +15,7 @@ export const TYPES = {
   fert: { title: 'Fertilize', sub: 'Spreader products', verb: 'Feeding logged' },
   weed: { title: 'Spot spray', sub: 'Hand pump sprayer', verb: 'Spot spray logged' },
   pull: { title: 'Pulled weeds', sub: 'By hand', verb: 'Weeding logged' },
-  water: { title: 'Watering', sub: 'Sprinkler runs and hand watering', verb: 'Watering logged' },
+  water: { title: 'Watering', sub: 'Hand watering (Rachio runs count automatically)', verb: 'Watering logged' },
   other: { title: 'Other', sub: 'Blowout, battery, aeration…', verb: 'Activity logged' },
 };
 const PULL_AMOUNTS = [['few', 'A few'], ['some', 'A bunch'], ['lots', 'Lots']];
@@ -313,9 +313,9 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
         <div class="calc-row"><span>Cost at ${fmtMoney(calc.rate.per1000)}/1,000</span><strong>${fmtMoney(calc.cost)}</strong></div>
       </div>
       ${sloped.length ? `<p class="hint">${icon('slope', 'hint-ic')} Sloped ${esc(sloped.map((z) => z.name).join(' & '))}: run in short cycles with a soak between.</p>` : ''}
-      <p class="hint">${rachioState() === 'off'
-        ? 'Rachio isn’t connected on this device, so log runs here.'
-        : 'Rachio runs show in Yard → My Zones but aren’t added to these totals, so log runs here to count them.'} Gallons use each zone’s flow rate.</p>`;
+      <p class="hint" data-testid="water-log-note">${rachioState() === 'off'
+        ? 'Rachio isn’t connected on this device, so log sprinkler runs here, or connect it in Yard → My Zones to count them automatically.'
+        : 'Rachio runs are now counted automatically. Only log hand watering here.'} Gallons use each zone’s flow rate.</p>`;
   };
 
   const pullHtml = () => `

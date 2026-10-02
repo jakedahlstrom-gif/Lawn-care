@@ -450,8 +450,8 @@ export function agenda(ctx) {
   // Pulling weeds after rain.
   const pullTask = tasks.find((t) => t.id === 'pull-weeds');
   if (pullTask && pullTask.status === 'now' && !recent('pull', 3)) {
-    const p0 = E.pullDay(weather, today, logs, zones);
-    const p1 = E.pullDay(weather, tomorrow, logs, zones);
+    const p0 = E.pullDay(weather, today, E.wateringsOf(ctx), zones);
+    const p1 = E.pullDay(weather, tomorrow, E.wateringsOf(ctx), zones);
     if (p0.good) out.today.push({ id: 'pull-weeds', icon: 'hand', title: 'Pull weeds', badge: 'today', reason: p0.note, action: { type: 'log', logType: 'pull' } });
     else if (p1.good && weather) out.tomorrow.push({ id: 'pull-weeds', icon: 'hand', title: 'Pull weeds', badge: 'scheduled', reason: p1.note.replace('Soft soil', 'Soft soil tomorrow'), action: { type: 'log', logType: 'pull' } });
   }
