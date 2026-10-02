@@ -420,6 +420,12 @@ test('migration from v1 keeps data, resets heights to Estimated, moves the plan 
   assert.equal(s.planProducts['feed-late-fall'], 'p-scotts-winterguard');
   assert.deepEqual(s.planChecks[2026], { 'feed-early-fall': true, battery: true });
   assert.equal(s.profile.name, 'Jake');
+  // Dark is the default: the old default (Auto) moves to Dark once; a theme picked after that sticks.
+  assert.equal(defaultSettings().appearance.theme, 'dark');
+  assert.equal(s.appearance.theme, 'dark');
+  assert.equal(migrateSettings({ ...v1, appearance: { theme: 'system' } }).appearance.theme, 'dark');
+  assert.equal(migrateSettings({ ...v1, appearance: { theme: 'light' } }).appearance.theme, 'light');
+  assert.equal(migrateSettings({ ...v1, appearance: { theme: 'system', darkDefault: true } }).appearance.theme, 'system');
   const oldProducts = [
     { id: 'p-lesco-24-0-11', order: 1, name: 'Lesco 24-0-11', type: 'fertilizer', n: 24, p: 0, k: 11, unit: 'lb', size: 50, coverage: 12000, price: 52, onHand: 40 },
     { id: 'p-scotts-32-0-4', order: 2, name: 'Scotts Turf Builder Lawn Food 32-0-4', type: 'fertilizer', n: 32, p: 0, k: 4, unit: 'lb', size: 12.5, coverage: 5000, price: 28, onHand: 5 },

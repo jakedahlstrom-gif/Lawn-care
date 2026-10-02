@@ -86,6 +86,9 @@ export function migrateSettings(stored) {
       delete checks['sharpen-spring'];
     }
   }
+  // Dark is the default theme: an install still on the old default (Auto) moves to Dark once. A theme you pick later sticks.
+  if (stored && stored.appearance?.darkDefault !== true && out.appearance.theme === 'system') out.appearance.theme = 'dark';
+  out.appearance.darkDefault = true;
   out.schema = SCHEMA;
   return out;
 }
@@ -123,7 +126,7 @@ export async function load() {
   S.settings.src = S.settings.src || {};
   const products = await db.getAll('products');
   const fixes = migrateProducts(products, from);
-  if (from < SCHEMA || fixes.length) {
+  if (from < SCHEMA || fixes.length || stored?.appearance?.darkDefault !== true) {
     await db.tx(['kv', 'products'], (st) => {
       st('kv').put(S.settings, 'settings');
       fixes.forEach((p) => st('products').put(p));

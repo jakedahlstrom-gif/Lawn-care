@@ -82,7 +82,7 @@ export function defaultSettings() {
     rachio: { zoneMap: {}, rates: {} }, // Rachio zone id → app zone id ('none' = don't count); nozzle in/hr you entered
     mowing: { cadenceDays: 7, preferredDays: [6, 0] },
     nitrogen: { seasonTarget: 3.0 },
-    appearance: { theme: 'system' },
+    appearance: { theme: 'dark', darkDefault: true }, // theme: 'dark' | 'light' | 'system' (Auto: follows the phone)
     winter: { on: false, dismissed: {} },
     calendar: { showPast: false },
     planProducts: defaultPlanProducts(),

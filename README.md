@@ -12,7 +12,7 @@ A mobile-first Progressive Web App for a Kentucky bluegrass lawn in Prior Lake, 
   - the 16-day forecast. Tap any day for hourly detail and lawn verdicts (mow, spot spray, pull weeds, feed).
 - **Calendar**: the Scotts feeding plan (Halts → Turf Builder Lawn Food → optional summer → WinterGuard), spaced at least 4 weeks apart. Missed windows roll into the next one. It also has the season's tasks, the fall checklist (ticks itself off from your logs), a shopping list in whole bags, and a "Show past" toggle.
 - **History**: every log entry, newest first, with filters, edit and delete, plus season totals (mows, lb N per 1,000 sq ft, products, watering cost).
-- **Yard**: a **My Zones** screen for Rachio watering (see below), plus rows for location, zones, mower, spreader, products, water rates, schedule and nitrogen. Each row opens a detail screen. Numbers you haven't confirmed show an **Estimated** badge; tap it once you've checked the value. The gear holds your name, header photo, appearance, Winter Mode, backup and reset (press and hold).
+- **Yard**: a **My Zones** screen for Rachio watering (see below), plus rows for location, zones, mower, spreader, products, water rates, schedule and nitrogen. Each row opens a detail screen. Numbers you haven't confirmed show an **Estimated** badge; tap it once you've checked the value. The gear holds your name, header photo, appearance (Dark by default; Auto follows the phone), Winter Mode, backup and reset (press and hold).
 
 **+** in the middle of the tab bar logs a mow, fertilizer, spot spray, pulled weeds, watering, or anything else, on any past date. You save by pressing and holding for 1 second, and Undo stays available for 5 seconds after saving.
 
