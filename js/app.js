@@ -74,7 +74,7 @@ export function render() {
 }
 
 function applyTheme() {
-  const t = S.settings?.appearance?.theme || 'system';
+  const t = S.settings?.appearance?.theme || 'dark';
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);

@@ -643,15 +643,27 @@ test('backup: export JSON, reset, import restores (photos, header and Rachio run
   await context.close();
 });
 
-test('dark mode follows the phone and can be overridden', async () => {
-  const { page, errors, context } = await open({ colorScheme: 'dark', path: '#yard' });
+test('dark mode is the default; Auto follows the phone and Light sticks', async () => {
+  const { page, errors, context } = await open({ colorScheme: 'light', path: '#yard' });
   const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  assert.equal(await bg(), 'rgb(11, 15, 12)');
+  const meta = () => page.evaluate(() => [...document.querySelectorAll('meta[name="theme-color"]')].map((m) => m.content));
+  const DARK = 'rgb(11, 15, 12)';
+  const LIGHT = 'rgb(244, 245, 241)';
+  assert.equal(await bg(), DARK); // dark even on a phone set to light
+  assert.deepEqual(await meta(), ['#0b0f0c', '#0b0f0c']);
   await page.click('.view.active [data-action="settings"]');
   await guard(page);
-  await sheet(page).locator('[data-seg="appearance.theme"] [data-value="light"]').click();
-  await page.waitForTimeout(200);
-  assert.equal(await bg(), 'rgb(244, 245, 241)');
+  const pick = async (v) => { await sheet(page).locator(`[data-seg="appearance.theme"] [data-value="${v}"]`).click(); await page.waitForTimeout(200); };
+  assert.equal(await sheet(page).locator('[data-seg="appearance.theme"] .seg-opt.on').getAttribute('data-value'), 'dark');
+  await pick('system');
+  assert.equal(await bg(), LIGHT); // Auto follows the phone
+  await pick('light');
+  assert.equal(await bg(), LIGHT);
+  await closeSheet(page);
+  await page.reload();
+  await page.waitForSelector('.view.active .page-head');
+  assert.equal(await bg(), LIGHT); // your pick survives a reload
+  assert.equal((await settingsOf(page)).appearance.theme, 'light');
   assert.deepEqual(errors, []);
   await context.close();
 });
