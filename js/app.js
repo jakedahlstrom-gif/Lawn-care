@@ -13,6 +13,7 @@ import { renderCalendar, openFeedingSheet, openTaskSheet } from './views/calenda
 import { renderHistory, historyState } from './views/history.js';
 import { openDaySheet } from './views/forecast.js';
 import * as Yard from './views/yard.js';
+import { openMyZones } from './views/rachio.js';
 
 const VIEWS = { today: renderToday, calendar: renderCalendar, history: renderHistory, yard: Yard.renderYard };
 const ALIASES = { plan: 'calendar' };
@@ -186,6 +187,7 @@ const actions = {
   },
   'yard-section': (el) => Yard.openYardSection(el.dataset.id),
   settings: () => Yard.openSettingsSheet(),
+  'my-zones': () => openMyZones(),
   'toggle-winter': () => setWinter(!S.settings.winter?.on),
   'winter-on': () => setWinter(true),
   'winter-off': () => setWinter(false),

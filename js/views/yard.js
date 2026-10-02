@@ -19,7 +19,7 @@ import {
   esc, fmtNum, fmtMoney, num, clone, round, getPath, dateStr, WEEKDAYS, nobreak, yearOf,
 } from '../util.js';
 
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.1.0';
 const f0 = (n) => fmtNum(n, 0);
 const ui = { includePhotos: true };
 let hooks = { ctx: () => ({}), applyTheme: () => {}, onLocationChange: () => {}, setWinter: async () => {} };
@@ -203,6 +203,13 @@ export function renderYard(el, c) {
         <span class="row-main"><span class="row-title">${SECTIONS[id].title}</span><span class="row-sub">${esc(nobreak(SECTIONS[id].summary(c)))}</span></span>
         ${icon('chev', 'chev')}
       </button>`).join('')}</div>
+    <div class="list-card">
+      <button type="button" class="row row-btn sec-rachio" data-action="my-zones">
+        <span class="sec-ic">${icon('water')}</span>
+        <span class="row-main"><span class="row-title">My Zones</span><span class="row-sub">Live from Rachio</span></span>
+        ${icon('chev', 'chev')}
+      </button>
+    </div>
     <p class="footer-note">Values marked <span class="prov est inline">Estimated</span> are guesses until you check them. Everything else is treated as trusted.</p>`;
 }
 
