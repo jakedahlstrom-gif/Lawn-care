@@ -15,6 +15,36 @@ function saveConn(conn) {
   try { if (conn) localStorage.setItem(KEY, JSON.stringify(conn)); else localStorage.removeItem(KEY); } catch { /* private mode */ }
 }
 
+// Connection status for the Today tab: checked once per saved connection, then kept current by My Zones.
+const STATUS_TEXT = {
+  off: 'Rachio not connected yet',
+  checking: 'Checking Rachio…',
+  ok: 'Rachio connected',
+  error: 'Rachio Worker not responding',
+};
+let status = null; // { key, state } for the saved connection
+
+const connKey = (conn) => `${conn.url}\n${conn.password}`;
+
+function setStatus(conn, state) {
+  status = conn ? { key: connKey(conn), state } : null;
+  const text = STATUS_TEXT[conn ? state : 'off'];
+  document.querySelectorAll('[data-rachio-status]').forEach((el) => { el.textContent = text; });
+}
+
+/** Status line for the saved Worker connection. Starts a check the first time a connection is seen. */
+export function rachioStatusText() {
+  const conn = loadConn();
+  if (!conn) return STATUS_TEXT.off;
+  if (status?.key !== connKey(conn)) {
+    status = { key: connKey(conn), state: 'checking' };
+    call(conn, '/person/info').then(() => 'ok', () => 'error').then((state) => {
+      if (status?.key === connKey(conn)) setStatus(conn, state);
+    });
+  }
+  return STATUS_TEXT[status.state];
+}
+
 async function call(conn, path) {
   const res = await fetch(conn.url.replace(/\/+$/, '') + path, { headers: { 'X-App-Password': conn.password } });
   if (res.status === 401) throw new Error('Wrong password');
@@ -76,14 +106,16 @@ export function openMyZones() {
 
   async function load() {
     const conn = loadConn();
-    if (!conn) { sheet.body.innerHTML = connectHtml(null); return; }
+    if (!conn) { setStatus(null); sheet.body.innerHTML = connectHtml(null); return; }
     sheet.body.innerHTML = '<p class="footer-note center">Loading from Rachio…</p>';
     try {
       const { devices } = await fetchRachio(conn);
+      setStatus(conn, 'ok');
       sheet.body.innerHTML = `${devices.map(deviceHtml).join('') || '<p class="footer-note">No Rachio controllers on this account.</p>'}
         <div class="list-card"><button type="button" class="row row-btn row-add" data-act="disconnect">${icon('close')}<span>Disconnect</span></button></div>
         <p class="footer-note">Read-only. Change schedules in the Rachio app.</p>`;
     } catch (err) {
+      setStatus(conn, 'error');
       sheet.body.innerHTML = connectHtml(conn, err.message === 'Failed to fetch' ? 'Couldn’t reach the Worker. Check the address and your connection.' : err.message);
     }
   }
