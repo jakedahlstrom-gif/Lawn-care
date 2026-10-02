@@ -750,6 +750,111 @@ export function waterWeek(ctx) {
   };
 }
 
+/* ======================= this week ======================= */
+
+// Water once the lawn is short by half of what it used this week (at least 0.3″), and never more than 1″ at a time:
+// bluegrass roots in clay loam hold about 1″ the grass can use, so more just drains past them or runs off.
+const WATER_TRIGGER = { share: 0.5, min: 0.3 };
+const MAX_SOAK = 1.0;
+const quarterInch = (n) => clamp(Math.round(n * 4) / 4, 0.25, MAX_SOAK);
+
+/** Reference evapotranspiration (ET0) from `from` (00:00) through the current hour: hourly when available, else daily. */
+export function et0SoFar(weather, from, today, now) {
+  if (!weather) return 0;
+  const idx = hourIndexNow(weather, now);
+  if (idx != null) {
+    const hrs = weather.hours.slice(0, idx + 1).filter((h) => h.t.slice(0, 10) >= from);
+    if (hrs.length && hrs.every((h) => h.et0 != null)) return sum(hrs, (h) => h.et0);
+  }
+  const share = clamp((localHour(weather, now) - 6) / 14, 0, 1); // most ET happens 6 AM–8 PM
+  return sum(dayTable(weather, from, addDays(today, -1)), (d) => d.et0) + dayTable(weather, today, today)[0].et0 * share;
+}
+
+/** Forecast rain over the next `hours` hours: total inches, the chance of the rainy hours, and the wettest day. */
+export function rainAhead(weather, today, now, hours = 72) {
+  const idx = hourIndexNow(weather, now);
+  const rows = idx != null
+    ? weather.hours.slice(idx + 1, idx + 1 + hours).map((h) => ({ date: h.t.slice(0, 10), rain: h.rain, pop: h.pop }))
+    : dayTable(weather, today, addDays(today, Math.ceil(hours / 24) - 1)).filter((d) => !d.est).map((d) => ({ date: d.date, rain: d.rain, pop: d.rainProb }));
+  const byDay = {};
+  for (const r of rows) byDay[r.date] = (byDay[r.date] || 0) + r.rain;
+  const wettest = Object.entries(byDay).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+  const pops = rows.filter((r) => r.rain > 0 && r.pop != null).map((r) => r.pop);
+  return {
+    total: sum(rows, (r) => r.rain),
+    chance: pops.length ? Math.max(...pops) : null,
+    wettest: wettest && wettest[1] >= 0.01 ? wettest[0] : null,
+  };
+}
+
+function wateringAdvice(w, ctx, cond) {
+  const { today, logs } = ctx;
+  const m = md(today);
+  const skip = (reason) => ({ status: 'skip', title: 'Skip watering', reason });
+  const sprinklers = sortLogs(logs.filter((l) => l.type === 'other' && (l.kind === 'blowout' || l.kind === 'startup') && l.date <= today))[0];
+  if (sprinklers?.kind === 'blowout' && daysBetween(sprinklers.date, today) < 200) {
+    return skip(`Sprinklers were blown out ${fmtMonthDay(sprinklers.date)}, so no watering until the spring start-up.`);
+  }
+  if (cond.frozen) return skip('The ground is frozen — no watering.');
+  if (m >= 1101 || m < 415) return skip('Off season — bluegrass uses very little water from November to mid-April.');
+
+  const used = `${fmtNum(w.et, 2)}″`;
+  const got = `${fmtNum(w.got, 2)}″`;
+  const short = `${fmtNum(w.short, 2)}″`;
+  if (w.short < Math.max(WATER_TRIGGER.min, w.et * WATER_TRIGGER.share)) {
+    return skip(w.short <= 0
+      ? `${w.watered > 0 ? 'Rain and watering' : 'Rain'} (${got}) kept up with the ${used} the lawn used this week.`
+      : `The lawn used ${used} and got ${got} this week — only ${short} short, and the soil still has moisture.`);
+  }
+  const a = w.ahead;
+  const likely = a.chance == null || a.chance >= 50 ? a.total : 0;
+  if (likely >= w.short * 0.6) {
+    const when = a.wettest ? `, mostly ${relDayLower(a.wettest, today)}` : '';
+    const chance = a.chance != null ? ` (${f0(a.chance)}% chance)` : '';
+    return {
+      status: 'hold',
+      title: 'Hold off for rain',
+      reason: `The lawn is ${short} short, but ${fmtNum(a.total, 2)}″ of rain is forecast${when}${chance} — enough to cover ${likely >= w.short ? 'it' : 'most of it'}.`,
+    };
+  }
+  const amount = quarterInch(w.short - likely);
+  const rain = likely >= 0.05 ? ` The ${fmtNum(likely, 2)}″ of rain in the forecast won’t cover it.` : ' Little rain is forecast.';
+  return {
+    status: 'water',
+    title: `Water about ${fmtNum(amount, 2)}″`,
+    amount,
+    reason: `The lawn used ${used} and got ${got} this week — ${short} short.${rain} One deep soak, early in the morning, is best.`,
+  };
+}
+
+/**
+ * The This Week card: rain over the last 7 days (6 days ago through the current hour) and the next 3 days, water lost
+ * to evapotranspiration over the same 7 days, soil temperature now, and whether to water, skip, or hold off for rain.
+ * Logged watering counts alongside rain, the same way the Watering card counts it.
+ */
+export function thisWeek(ctx) {
+  const { today, now, weather } = ctx;
+  if (!weather) return { available: false };
+  const cond = ctx.cond || conditions(ctx);
+  const ww = waterWeek({ ...ctx, cond });
+  const from = addDays(today, -6);
+  const et = et0SoFar(weather, from, today, now) * KC;
+  const idx = hourIndexNow(weather, now);
+  const w = {
+    available: true,
+    from,
+    rain: ww.rain,
+    watered: ww.watered,
+    got: ww.total,
+    et,
+    short: et - ww.total,
+    ahead: rainAhead(weather, today, now, 72),
+    soilNow: (idx != null ? weather.hours[idx].soil : null) ?? cond.soil24,
+    soil24: cond.soil24,
+  };
+  return { ...w, advice: wateringAdvice(w, ctx, cond) };
+}
+
 /* ======================= totals ======================= */
 
 export function seasonTotals({ logs, zones, products, settings }, year) {

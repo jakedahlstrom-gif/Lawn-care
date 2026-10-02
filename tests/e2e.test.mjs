@@ -145,6 +145,20 @@ test('Today: header, next mow, sections, watering and conditions, forecast, shop
   assert.equal(await page.locator('[data-testid="today-section"] .task-row[data-id="mow"]').count(), 0);
   // No lawn score, no "looking great" text, no separate tomorrow mow card.
   assert.doesNotMatch(await page.textContent('#view-today'), /looking great|\/ ?100|Lawn status/i);
+  // This Week: rain behind and ahead, ET, soil now, the watering call, and the soil-timed fall feeding.
+  assert.equal(await page.getAttribute('[data-testid="water-advice"]', 'data-status'), 'skip');
+  assert.equal(await page.textContent('[data-testid="water-advice"]'), 'Skip watering');
+  assert.equal(await page.textContent('[data-testid="week-rain"]'), '0.4″');
+  assert.equal(await page.textContent('[data-testid="week-ahead"]'), '0″');
+  assert.equal(await page.textContent('[data-testid="week-et"]'), '0.59″');
+  assert.equal(await page.textContent('[data-testid="week-soil"]'), '57°F');
+  assert.match(await page.textContent('[data-testid="water-reason"]'), /used 0\.59″ and got 0\.4″ this week — only 0\.19″ short/);
+  const alert = page.locator('[data-testid="soil-alerts"] .sa-row[data-alert="fall-feed"]');
+  assert.match(await alert.textContent(), /Fall feeding.*Soil is 57°F.*forecast around Oct 8.*Feed now/s);
+  await alert.click();
+  await page.waitForSelector('.task-sheet');
+  assert.match(await sheet(page).textContent(), /Fall feeding.*never spread on frozen ground/is);
+  await closeSheet(page);
   // Watering: rain from weather + logged watering, Rachio note.
   assert.equal(await page.textContent('[data-testid="water-total"]'), '0.4″');
   assert.match(await page.textContent('[data-testid="water"]'), /Rain 0\.4″ · Logged 0″.*0 gal · \$0\.00.*Rachio not connected yet/s);
@@ -157,6 +171,28 @@ test('Today: header, next mow, sections, watering and conditions, forecast, shop
     assert.deepEqual(await overflow(page, '.view.active'), [], `overflow on ${t}`);
   }
   assert.deepEqual(errors, []);
+  await context.close();
+});
+
+test('This Week: hold off for rain in July, and a retry card when the weather service is down', async () => {
+  let { page, errors, context } = await open({
+    time: '2026-07-15T09:00:00-05:00', today: '2026-07-15', day: (d, i) => (i === 2 ? { rain: 0.9, prob: 85, tMax: 80, tMin: 64, et0: 0.2 } : { tMax: 86, tMin: 66, et0: 0.2 }),
+  });
+  await page.waitForSelector('[data-testid="water-advice"]');
+  assert.equal(await page.getAttribute('[data-testid="water-advice"]', 'data-status'), 'hold');
+  assert.equal(await page.textContent('[data-testid="water-advice"]'), 'Hold off for rain');
+  assert.equal(await page.textContent('[data-testid="week-ahead"]'), '0.9″');
+  assert.match(await page.textContent('[data-testid="this-week"]'), /next 3 days · 85%/);
+  assert.match(await page.textContent('[data-testid="water-reason"]'), /0\.99″ short, but 0\.9″ of rain is forecast, mostly Friday \(85% chance\)/);
+  assert.equal(await page.locator('[data-testid="soil-alerts"]').count(), 0);
+  assert.deepEqual(await overflow(page, '.view.active'), []);
+  assert.deepEqual(errors, []);
+  await context.close();
+
+  const down = (ctx) => ctx.route('https://api.open-meteo.com/**', (r) => r.fulfill({ status: 503, body: 'down' }));
+  ({ page, errors, context } = await open({ setup: down }));
+  await page.locator('[data-testid="this-week"]').getByText('Weather unavailable — tap to retry').waitFor();
+  assert.deepEqual(errors.filter((e) => !/503/.test(e)), []);
   await context.close();
 });
 
@@ -494,6 +530,7 @@ test('spring: soil-triggered crabgrass preventer, spring alert, and a prompt to 
   const { page, errors, context } = await open({ time: '2027-04-21T09:00:00-05:00', today: '2027-04-21', day: (d, i) => ({ tMax: 64, tMin: 42, soil: 51 + i * 0.3 }) });
   assert.match(await page.textContent('[data-testid="feed-line"]'), /Feeding window open now · Halts/);
   assert.match(await page.textContent('#view-today'), /Crabgrass preventer \+ feeding/);
+  assert.match(await page.textContent('[data-testid="soil-alerts"]'), /Crabgrass preventer.*Soil is 51°F and warming toward 55°F.*Apply now/s);
   await page.click('[data-testid="winter-toggle"]');
   await page.waitForSelector('[data-testid="winter-prompt"]');
   assert.match(await page.textContent('[data-testid="winter-prompt"]'), /turn off Winter Mode/);

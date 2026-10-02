@@ -12,8 +12,8 @@ const TODAY = '2026-10-02'; // Friday
 const at = (date, hour = 9) => new Date(`${date}T${String(hour).padStart(2, '0')}:00:00-05:00`).getTime();
 const near = (a, b, eps = 0.01) => assert.ok(Math.abs(a - b) < eps, `${a} ≉ ${b}`);
 
-function ctx({ today = TODAY, hour = 9, logs = [], day, settings, zones, products, noWeather = false } = {}) {
-  const raw = mockForecast({ today, day, nowHour: hour });
+function ctx({ today = TODAY, hour = 9, logs = [], day, settings, zones, products, noWeather = false, hourlyEt = true } = {}) {
+  const raw = mockForecast({ today, day, nowHour: hour, hourlyEt });
   const c = {
     today,
     now: at(today, hour),
@@ -246,6 +246,116 @@ test('watering: weekly total = rain + logged runs; gallons from zone flow', () =
   near(w.gallons, calc.gallons, 0.01);
 });
 
+/* ---------- this week ---------- */
+
+const water = (date, minutes) => ({ id: `w-${date}`, type: 'water', date, at: at(date), zones: ['z1', 'z2', 'z3', 'z4', 'z5', 'z6'], minutes });
+
+test('this week: rain behind and ahead, ET over the same 7 days, soil now', () => {
+  const w = E.thisWeek(ctx({ day: (d, i) => (i === -6 ? { rain: 0.3 } : i === -7 ? { rain: 2 } : i === 1 ? { rain: 0.2 } : i === 3 ? { rain: 1 } : {}) }));
+  assert.equal(w.available, true);
+  assert.equal(w.from, '2026-09-26');
+  near(w.rain, 0.3); // 7 days ago doesn't count; 6 days ago does
+  near(w.ahead.total, 0.2); // next 72 hours: the 1″ on day 3 falls after 9 AM Monday
+  assert.equal(w.ahead.wettest, '2026-10-03');
+  assert.equal(w.ahead.chance, 70);
+  // ET0 0.12″/day x Kc 0.8: six full days plus today's share through 9 AM.
+  near(w.et, 0.594, 0.005);
+  near(w.soil24, 56, 0.2);
+  near(w.soilNow, 56, 0.05);
+  near(E.thisWeek(ctx({ hour: 15 })).soilNow, 58, 0.05); // afternoon soil runs warmer than the 24-h average
+  // Cached data without hourly ET0 falls back to daily totals.
+  near(E.thisWeek(ctx({ hourlyEt: false })).et, w.et, 0.01);
+  assert.deepEqual(E.thisWeek(ctx({ noWeather: true })), { available: false });
+});
+
+test('this week: water, skip, or hold off for rain', () => {
+  const dry = E.thisWeek(ctx()).advice;
+  assert.equal(dry.status, 'water');
+  assert.equal(dry.title, 'Water about 0.5″');
+  assert.match(dry.reason, /used 0\.59″ and got 0″ this week — 0\.59″ short\. Little rain is forecast/);
+  const covered = E.thisWeek(ctx({ day: (d, i) => (i === -3 ? { rain: 1 } : {}) })).advice;
+  assert.equal(covered.status, 'skip');
+  assert.match(covered.reason, /^Rain \(1″\) kept up with the 0\.59″ the lawn used this week\.$/);
+  const close = E.thisWeek(ctx({ day: (d, i) => (i === -1 ? { rain: 0.4 } : {}) })).advice;
+  assert.equal(close.status, 'skip');
+  assert.match(close.reason, /only 0\.19″ short/);
+  const hold = E.thisWeek(ctx({ day: (d, i) => (i === 2 ? { rain: 0.6, prob: 80 } : {}) })).advice;
+  assert.equal(hold.status, 'hold');
+  assert.equal(hold.title, 'Hold off for rain');
+  assert.match(hold.reason, /0\.6″ of rain is forecast, mostly Sunday \(80% chance\) — enough to cover it\./);
+  const some = E.thisWeek(ctx({ day: (d, i) => (i === 1 ? { rain: 0.15 } : {}) })).advice;
+  assert.equal(some.status, 'water');
+  assert.equal(some.amount, 0.5);
+  assert.match(some.reason, /The 0\.15″ of rain in the forecast won’t cover it/);
+  // Hot, dry July week: cap a single soak at 1″.
+  const july = E.thisWeek(ctx({ today: '2026-07-15', day: () => ({ tMax: 90, tMin: 70, et0: 0.25 }) })).advice;
+  assert.equal(july.status, 'water');
+  assert.equal(july.amount, 1);
+});
+
+test('this week: logged watering counts; blowout, frozen ground and off season skip', () => {
+  const w = E.thisWeek(ctx({ logs: [water('2026-09-30', 40)] }));
+  near(w.watered, 0.4756, 0.001);
+  near(w.got, w.rain + w.watered);
+  assert.equal(w.advice.status, 'skip');
+  const blown = E.thisWeek(ctx({ logs: [other('2026-10-01', 'blowout')] })).advice;
+  assert.equal(blown.status, 'skip');
+  assert.match(blown.reason, /blown out Oct 1/);
+  const restarted = E.thisWeek(ctx({ today: '2027-05-20', logs: [other('2026-10-20', 'blowout'), other('2027-05-02', 'startup')] })).advice;
+  assert.equal(restarted.status, 'water');
+  assert.match(E.thisWeek(ctx({ today: '2026-11-10' })).advice.reason, /^Off season/);
+  assert.match(E.thisWeek(ctx({ today: '2026-10-28', day: () => ({ tMax: 30, tMin: 15, soil: 30 }) })).advice.reason, /frozen/);
+});
+
+/* ---------- soil timing ---------- */
+
+test('soil timing: fall fertilizer follows the feeding schedule and stops near 40°F soil', () => {
+  const [combined] = Season.soilAlerts(ctx());
+  assert.equal(combined.id, 'fall-feed');
+  assert.equal(combined.feedingId, 'feed-late-fall');
+  assert.equal(combined.title, 'Fall feeding');
+  assert.equal(combined.level, 'now');
+  assert.equal(combined.badge, 'Feed now');
+  assert.match(combined.text, /Soil is 56°F\. Roots keep taking up nitrogen until soil drops near 40°F/);
+  const cooling = Season.soilAlerts(ctx({ day: (d, i) => ({ soil: 56 - i * 2 }) }))[0];
+  assert.match(cooling.text, /forecast around Oct 10/);
+  const [late] = Season.soilAlerts(ctx({ logs: [feed('2026-09-05')] }));
+  assert.equal(late.title, 'Late-fall feeding');
+  assert.equal(late.level, 'soon');
+  assert.equal(late.badge, 'Oct 10');
+  assert.match(late.text, /soil cools toward 50°F, usually mid-October/);
+  const [early] = Season.soilAlerts(ctx({ today: '2026-08-28', logs: [feed('2026-05-28', 'p-scotts-32-0-4')], day: () => ({ tMax: 82, tMin: 62, soil: 72 }) }));
+  assert.equal(early.title, 'Early-fall feeding');
+  assert.equal(early.level, 'now');
+  assert.match(early.text, /Soil is 72°F and cooling — bluegrass roots are rebuilding/);
+  const cold = Season.soilAlerts(ctx({ today: '2026-10-20', day: () => ({ tMax: 44, tMin: 30, soil: 38 }) }))[0];
+  assert.equal(cold.level, 'late');
+  assert.equal(cold.badge, 'Too cold');
+  assert.match(cold.text, /never spread on frozen ground/);
+  assert.deepEqual(Season.soilAlerts(ctx({ today: '2026-10-20', logs: [feed('2026-09-05'), feed('2026-10-12')] })), []);
+  assert.deepEqual(Season.soilAlerts(ctx({ today: '2026-07-15' })), []);
+  assert.deepEqual(Season.soilAlerts(ctx({ noWeather: true })), []);
+});
+
+test('soil timing: spring crabgrass preventer by soil temperature and forecast', () => {
+  const early = Season.soilAlerts(ctx({ today: '2027-04-05', day: () => ({ tMax: 50, tMin: 32, soil: 40 }) }))[0];
+  assert.equal(early.id, 'crabgrass');
+  assert.equal(early.level, 'later');
+  assert.equal(early.badge, 'Not yet');
+  assert.match(early.text, /Soil is 40°F\. The window opens when soil climbs past 50°F, usually late April\./);
+  const soon = Season.soilAlerts(ctx({ today: '2027-04-12', day: (d, i) => ({ tMax: 58, tMin: 36, soil: 45 + i * 0.6 }) }))[0];
+  assert.equal(soon.level, 'soon');
+  assert.equal(soon.badge, '~Apr 21');
+  assert.match(soon.text, /forecast to reach 50°F around Apr 21.*Have Halts on hand/);
+  const open = Season.soilAlerts(ctx({ today: '2027-04-21', day: () => ({ tMax: 64, tMin: 42, soil: 52 }) }))[0];
+  assert.equal(open.level, 'now');
+  assert.equal(open.badge, 'Apply now');
+  assert.match(open.text, /Soil is 52°F and warming toward 55°F, when crabgrass sprouts\. Best time for Halts\./);
+  const sprouting = Season.soilAlerts(ctx({ today: '2027-04-28', day: () => ({ tMax: 70, tMin: 48, soil: 58 }) }))[0];
+  assert.match(sprouting.text, /crabgrass starts sprouting once soil holds 55°F\. Get Halts down right away\./);
+  assert.deepEqual(Season.soilAlerts(ctx({ today: '2027-04-28', logs: [feed('2027-04-24', 'p-scotts-halts', 20)], day: () => ({ soil: 58 }) })), []);
+});
+
 /* ---------- checklists and winter ---------- */
 
 test('fall checklist completes from logs; winter prompt after wrap-up', () => {
@@ -336,4 +446,7 @@ test('weather normalize handles metric units and snow depth', () => {
   near(us.dayMap[TODAY].et0, metric.dayMap[TODAY].et0);
   near(us.dayMap[TODAY].tMax, metric.dayMap[TODAY].tMax, 0.05);
   near(us.hours[us.hourIndex[`${TODAY}T09`]].snowDepth, 3);
+  near(us.hours[us.hourIndex[`${TODAY}T12`]].et0, metric.hours[metric.hourIndex[`${TODAY}T12`]].et0, 0.001);
+  assert.ok(us.hours[us.hourIndex[`${TODAY}T12`]].et0 > 0.01);
+  assert.equal(normalize(mockForecast({ today: TODAY, hourlyEt: false }), 0).hours[0].et0, null);
 });
