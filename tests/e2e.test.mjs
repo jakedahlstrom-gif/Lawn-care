@@ -35,7 +35,7 @@ after(async () => {
 const fallDay = (d, i) => (i === -1 ? { rain: 0.4, prob: 80, tMax: 61, tMin: 40, soil: 57 } : i === 6 ? { tMin: 27, tMax: 44 } : { tMax: 61, tMin: 40, soil: 57 });
 
 async function open({
-  time = '2026-10-02T09:00:00-05:00', today = '2026-10-02', day = fallDay, colorScheme = 'light', sw = 'block', path = '', seed = null,
+  time = '2026-10-02T09:00:00-05:00', today = '2026-10-02', day = fallDay, colorScheme = 'light', sw = 'block', path = '', seed = null, setup = null,
 } = {}) {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true,
@@ -45,6 +45,7 @@ async function open({
   await context.route('https://api.open-meteo.com/**', (r) => r.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify(mockForecast({ today, day })),
   }));
+  if (setup) await setup(context);
   const page = await context.newPage();
   await page.clock.resume();
   const errors = [];
@@ -708,5 +709,33 @@ test('My Zones connects to the Worker and shows Rachio zones and events', async 
   assert.match(await sheet(page).textContent(), /20 min/);
   assert.deepEqual(await overflow(page, '.sheet-wrap:last-child .sheet'), []);
   assert.deepEqual(errors.filter((e) => !/401/.test(e)), []);
+  await context.close();
+});
+
+test('Today shows the saved Rachio Worker connection status', async () => {
+  const W = 'https://rachio.example.workers.dev';
+  const save = (pw) => `localStorage.setItem('lawn-care-rachio', JSON.stringify({ url: '${W}', password: '${pw}' }))`;
+  const setup = (context) => context.route(`${W}/**`, (r) => {
+    const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'X-App-Password' };
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers });
+    if (r.request().headers()['x-app-password'] !== 'pw') return r.fulfill({ status: 401, headers, json: { error: 'Wrong password' } });
+    return r.fulfill({ headers, json: { id: 'p1' } });
+  });
+  const status = (page) => page.locator('[data-testid="rachio-status"]');
+
+  // Saved address and password, and the Worker answers.
+  let { page, errors, context } = await open({ setup, seed: save('pw') });
+  await status(page).getByText('Rachio connected').waitFor();
+  assert.deepEqual(errors, []);
+  await context.close();
+
+  // Saved, but the Worker rejects the password.
+  ({ page, context } = await open({ setup, seed: save('bad') }));
+  await status(page).getByText('Rachio Worker not responding').waitFor();
+  await context.close();
+
+  // Nothing saved on this device.
+  ({ page, context } = await open({ setup }));
+  assert.equal(await status(page).textContent(), 'Rachio not connected yet');
   await context.close();
 });

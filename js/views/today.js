@@ -9,6 +9,7 @@ import { describeCode } from '../weather.js';
 import { MOW_PATTERNS } from '../defaults.js';
 import { onLongPress, popover } from '../ui.js';
 import { renderWinter } from './winter.js';
+import { rachioStatusText } from './rachio.js';
 import { esc, fmtDay, fmtNum, fmtMoney, fmtTime, fmtMonthDay, daysBetween, WEEKDAYS, nobreak } from '../util.js';
 
 const f0 = (n) => fmtNum(n, 0);
@@ -126,7 +127,7 @@ function waterCardHtml(c) {
     <div class="mini-sub">past 7 days</div>
     <div class="mini-lines">Rain ${fmtNum(w.rain, 2)}″ · Logged ${fmtNum(w.watered, 2)}″</div>
     <div class="mini-lines">${f0(w.gallons)} gal · ${fmtMoney(w.cost)}</div>
-    <div class="mini-note">Rachio not connected yet</div>
+    <div class="mini-note" data-rachio-status data-testid="rachio-status">${esc(rachioStatusText())}</div>
   </div>`;
 }
 
