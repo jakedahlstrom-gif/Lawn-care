@@ -1,11 +1,12 @@
-// Lawn logic: growth model, mowing/fertilizer/watering recommendations, plan, alerts, totals.
-// Pure functions only (no DOM) so they can be unit-tested. Dates are local 'YYYY-MM-DD' strings.
+// Core lawn logic: zones/products, water math, weather helpers, growth model, mowing, application timing,
+// safety timers and totals. Pure functions only (no DOM). Dates are local 'YYYY-MM-DD' strings.
+// Season planning (feeding windows, tasks, agenda, winter) lives in season.js.
 
 import {
   addDays, daysBetween, dow, md, yearOf, clamp, round, sum, avg, fmtMonthDay, relDay, relDayLower,
   fmtNum, fmtUntil, WEEKDAYS_LONG, maxDate, dateStr,
 } from './util.js';
-import { OTHER_KINDS } from './defaults.js';
+import { OTHER_KINDS, LEGACY_KIND_LABELS, MOW_PATTERNS, shortName } from './defaults.js';
 
 export const KC = 0.8; // crop coefficient for cool-season turf
 export const SUN_FACTOR = { full: 1, partial: 0.85, shade: 0.7 };
@@ -29,6 +30,8 @@ export function costPerLbN(p) {
   const n = p && p.unit === 'lb' ? (p.size * (p.n || 0)) / 100 : 0;
   return n > 0 && p.price > 0 ? p.price / n : null;
 }
+/** A spreader log that put nitrogen down counts as a feeding. */
+export const isFeeding = (l) => l.type === 'fert' && ((l.effects?.nLbs || 0) > 0 || (l.n || 0) > 0);
 
 /* ======================= water ======================= */
 
@@ -98,6 +101,33 @@ export function waterRateInfo(settings, zones) {
   return { idx, topIdx, auto, rate, sewer, per1000: round(rate + sewer, 4), weekly, periodIrr, base, total, blended, tiers };
 }
 
+/**
+ * A manual watering run: inches and gallons from the zones' precipitation and flow rates.
+ * Lawn inches are area-weighted across the lawn zones that ran.
+ */
+export function wateringCalc(zones, zoneIds, minutes, settings) {
+  const sel = zones.filter((z) => zoneIds.includes(z.id));
+  const rows = sel.map((z) => ({
+    zone: z,
+    inches: isLawn(z) && z.precip > 0 ? (minutes * z.precip) / 60 : null,
+    gallons: minutes * (z.gpm || 0),
+  }));
+  const lawnRows = rows.filter((r) => r.inches != null);
+  const area = sum(lawnRows, (r) => r.zone.sqft);
+  const inches = area > 0 ? sum(lawnRows, (r) => r.inches * r.zone.sqft) / area : 0;
+  const gallons = sum(rows, (r) => r.gallons);
+  const rate = settings ? waterRateInfo(settings, zones) : null;
+  return { rows, inches, gallons, cost: rate ? (gallons / 1000) * rate.per1000 : 0, rate };
+}
+
+/** Inches of watering spread over the whole lawn (a run on part of the lawn counts proportionally). */
+export function lawnInchesFromLog(l, zones) {
+  const total = lawnArea(zones);
+  if (!(total > 0)) return 0;
+  const sel = lawnZones(zones).filter((z) => (l.zones || []).includes(z.id) && z.precip > 0);
+  return sum(sel, (z) => ((l.minutes || 0) * z.precip / 60) * z.sqft) / total;
+}
+
 /* ======================= weather helpers ======================= */
 
 // Minneapolis–St. Paul normals by month: [high °F, low °F, rain in/day, ET0 in/day]
@@ -117,7 +147,7 @@ export function climo(date) {
   const mix = (i) => a[i] + (b[i] - a[i]) * t;
   const hi = mix(0);
   const lo = mix(1);
-  return { date, tMax: hi, tMin: lo, rain: mix(2), rainProb: 30, et0: mix(3), wind: 8, code: null, soil: (hi + lo) / 2, est: true };
+  return { date, tMax: hi, tMin: lo, rain: mix(2), rainProb: 30, et0: mix(3), wind: 8, code: null, snow: 0, soil: (hi + lo) / 2, est: true };
 }
 
 /** Day rows from..to (inclusive), from the forecast when present, else climate normals. */
@@ -141,19 +171,23 @@ export function dayTable(weather, from, to) {
   return out;
 }
 
-const hourKey = (ms, utcOffset) => new Date(ms + utcOffset * 1000).toISOString().slice(0, 13);
+export const hourKey = (ms, utcOffset) => new Date(ms + utcOffset * 1000).toISOString().slice(0, 13);
+
+/** Index of the current hour in the hourly series (or the last hour if cached data ends within a day). */
+export function hourIndexNow(weather, now) {
+  if (!weather?.hours?.length) return null;
+  const key = hourKey(now, weather.utcOffset || 0);
+  const idx = weather.hourIndex?.[key];
+  if (idx != null) return idx;
+  const last = weather.hours.length - 1;
+  if (key > weather.hours[last].t && daysBetween(weather.hours[last].t.slice(0, 10), key.slice(0, 10)) <= 1) return last;
+  return null;
+}
 
 /** Average soil temperature (2.4″ depth) over the last 24 hours, °F. */
 export function soilAvg24(weather, now) {
-  if (!weather?.hours?.length) return null;
-  const key = hourKey(now, weather.utcOffset || 0);
-  let idx = weather.hourIndex?.[key];
-  if (idx == null) {
-    // Cached data that no longer covers "now": only trust it within a day.
-    const last = weather.hours.length - 1;
-    if (key > weather.hours[last].t && daysBetween(weather.hours[last].t.slice(0, 10), key.slice(0, 10)) <= 1) idx = last;
-    else return null;
-  }
+  const idx = hourIndexNow(weather, now);
+  if (idx == null) return null;
   const vals = weather.hours.slice(Math.max(0, idx - 23), idx + 1).map((h) => h.soil).filter((v) => v != null);
   return vals.length >= 6 ? avg(vals) : null;
 }
@@ -163,8 +197,18 @@ export const localHour = (weather, now) => (weather?.utcOffset != null
   ? Number(hourKey(now, weather.utcOffset).slice(11, 13))
   : new Date(now).getHours());
 
+/** Rain that has fallen from `from` (00:00) through the current hour. */
+export function rainSoFar(weather, from, today, now) {
+  if (!weather) return 0;
+  const idx = hourIndexNow(weather, now);
+  if (idx != null) {
+    return sum(weather.hours.slice(0, idx + 1).filter((h) => h.t.slice(0, 10) >= from), (h) => h.rain);
+  }
+  return sum(dayTable(weather, from, addDays(today, -1)).filter((d) => !d.est), (d) => d.rain);
+}
+
 export function conditions({ weather, today, now }) {
-  const next = dayTable(weather, today, addDays(today, 9));
+  const next = dayTable(weather, today, addDays(today, 15));
   const past = dayTable(weather, addDays(today, -7), addDays(today, -1));
   const live = next.filter((d) => !d.est);
   const soil24 = soilAvg24(weather, now);
@@ -176,8 +220,8 @@ export function conditions({ weather, today, now }) {
     past,
     highs5,
     maxHigh7: Math.max(...next.slice(0, 7).map((d) => d.tMax)),
-    hardFreeze: live.find((d) => d.tMin <= 28) || null,
-    frost: live.find((d) => d.tMin <= 32) || null,
+    hardFreeze: live.slice(0, 10).find((d) => d.tMin <= 28) || null,
+    frost: live.slice(0, 10).find((d) => d.tMin <= 32) || null,
     pastHardFreeze: past.find((d) => !d.est && d.tMin <= 28) || null,
     frozen: soil24 != null && soil24 <= 32,
     rainPast7: sum(past, (d) => d.rain),
@@ -188,7 +232,7 @@ export function conditions({ weather, today, now }) {
   };
 }
 
-/* ======================= logs & mower ======================= */
+/* ======================= logs ======================= */
 
 const byDateDesc = (a, b) => (a.date === b.date ? (b.at || 0) - (a.at || 0) : a.date < b.date ? 1 : -1);
 export const sortLogs = (logs) => [...logs].sort(byDateDesc);
@@ -197,17 +241,7 @@ export function lastMow(logs, today) {
   return sortLogs(logs.filter((l) => l.type === 'mow' && l.date <= today))[0] || null;
 }
 
-export function mowerHours(settings, logs) {
-  const m = settings.mower;
-  const mows = logs.filter((l) => l.type === 'mow');
-  const total = (m.hoursBefore || 0) + sum(mows, (l) => l.hours);
-  const lastSharpen = sortLogs(logs.filter((l) => l.type === 'other' && l.kind === 'sharpen'))[0] || null;
-  const since = lastSharpen
-    ? sum(mows.filter((l) => l.date > lastSharpen.date || (l.date === lastSharpen.date && (l.at || 0) > (lastSharpen.at || 0))), (l) => l.hours)
-    : (m.sinceSharpenAtStart || 0) + sum(mows, (l) => l.hours);
-  const every = m.sharpenEvery > 0 ? m.sharpenEvery : 25;
-  return { total, since, every, lastSharpen, due: since >= every, soon: since >= every * 0.85 };
-}
+export const mowingHours = (logs) => sum(logs.filter((l) => l.type === 'mow'), (l) => l.hours);
 
 /** +1 when a note says the grass was long/fast, -1 when it barely grew, 0 otherwise. */
 export function noteSentiment(text) {
@@ -244,10 +278,12 @@ export function growthPotential(tMeanF) {
   return Math.exp(-0.5 * ((c - 20) / 5.5) ** 2);
 }
 
-function growthModel(table, logs, calib) {
+function growthModel(table, logs, zones, calib) {
   const index = {};
   table.forEach((d, i) => { index[d.date] = i; });
   const feedDates = logs.filter((l) => (l.effects?.nLbs || 0) > 0).map((l) => l.date);
+  const watered = {};
+  for (const l of logs) if (l.type === 'water') watered[l.date] = (watered[l.date] || 0) + lawnInchesFromLog(l, zones);
   const daily = (date) => {
     const i = index[date];
     if (i == null) return 0;
@@ -256,9 +292,9 @@ function growthModel(table, logs, calib) {
     if (d.tMax >= 90) g *= 0.6;
     else if (d.tMax >= 85) g *= 0.8;
     const w = table.slice(Math.max(0, i - 6), i + 1);
-    const rain = sum(w, (x) => x.rain);
+    const water = sum(w, (x) => x.rain + (watered[x.date] || 0));
     const et = sum(w, (x) => x.et0) * KC;
-    g *= clamp(0.85 + 0.3 * (rain / Math.max(et, 0.2)), 0.85, 1.15);
+    g *= clamp(0.85 + 0.3 * (water / Math.max(et, 0.2)), 0.85, 1.15);
     if (feedDates.some((fd) => { const n = daysBetween(fd, date); return n >= 3 && n <= 28; })) g *= 1.2;
     const m = md(date);
     if (m >= 420 && m <= 610) g *= 1.15; // spring flush
@@ -286,6 +322,20 @@ export function nearestPosition(heights, target) {
 export function positionAtLeast(heights, min) {
   const s = positionsByHeight(heights);
   return (s.find((p) => p.h >= min - 0.01) || s[s.length - 1]).pos;
+}
+
+/** Stripe direction for the next mow: one step past the last logged mow's direction. */
+export function nextPattern(logs, today) {
+  const mows = sortLogs(logs.filter((l) => l.type === 'mow' && (!today || l.date <= today)));
+  if (!mows.length) return 0;
+  const last = mows[0];
+  if (Number.isInteger(last.pattern)) return (last.pattern + 1) % MOW_PATTERNS.length;
+  return mows.length % MOW_PATTERNS.length;
+}
+
+export function patternText(id) {
+  const p = MOW_PATTERNS[id] || MOW_PATTERNS[0];
+  return `Front yard: stripes ${p.label.toLowerCase()}. Side Left and Side Right: always mow across the slope.`;
 }
 
 export function seasonInfo(date, cond, logs) {
@@ -352,27 +402,28 @@ function activeTimer(logs, now, kind) {
 }
 
 /**
- * Next mow: day, mower position, height and a one-line reason.
+ * Next mow: day, mower position, height, stripe direction and a one-line reason.
  * Picks the best-weather day near the weekly cadence, favoring preferred days, and keeps each cut within the one-third rule.
  */
 export function mowRecommendation(ctx) {
-  const { today, now, logs, settings, weather } = ctx;
+  const { today, now, logs, settings, weather, zones } = ctx;
   const cond = ctx.cond || conditions(ctx);
   const heights = settings.mower.heights.map(Number);
   const maxH = Math.max(...heights);
   const cadence = clamp(Math.round(settings.mowing.cadenceDays || 7), 3, 21);
   const pref = settings.mowing.preferredDays || [];
   const season = seasonInfo(today, cond, logs);
-  const slopedZones = lawnZones(ctx.zones).filter(isSloped);
-  const shadeZones = lawnZones(ctx.zones).filter((z) => z.sun === 'shade');
-  if (season.off) return { status: 'off', season, title: season.label, reason: season.reason };
+  const slopedZones = lawnZones(zones).filter(isSloped);
+  const shadeZones = lawnZones(zones).filter((z) => z.sun === 'shade');
+  const pattern = nextPattern(logs, today);
+  if (season.off) return { status: 'off', season, title: season.label, reason: season.reason, pattern };
 
   const last = lastMow(logs, today);
   const calib = growthCalibration(logs, today);
   const tableStart = addDays(last ? (last.date < addDays(today, -30) ? addDays(today, -30) : last.date) : today, -8);
   const table = dayTable(weather, tableStart, addDays(today, 18));
   const byDate = Object.fromEntries(table.map((d) => [d.date, d]));
-  const growth = growthModel(table, logs, calib.factor);
+  const growth = growthModel(table, logs, zones, calib.factor);
   const lastH = last ? (last.height ?? heights[(last.position || 5) - 1]) : season.target;
   const growthTo = (d) => (last ? growth.between(maxDate(last.date, addDays(today, -30)), d) : 0);
 
@@ -502,6 +553,7 @@ export function mowRecommendation(ctx) {
     notes,
     calibration: calib,
     final: season.final,
+    pattern,
   };
 }
 
@@ -517,20 +569,24 @@ const growthText = (g) => (g < 0.1 ? '0.1″' : `${fmtNum(g, 1)}″`);
 
 /* ======================= application timing ======================= */
 
+export const SPRAY_RULES = { minHigh: 50, maxHigh: 85, maxWind: 10, dryHours: 24 };
+
 /**
- * Rate the next 7 days for spreading/spraying a product, using hourly rain.
- * Fertilizer: avoid heavy rain during the no-rain window (stricter on slopes); light rain after is good.
+ * Rate the next days for spreading or spot spraying a product, using hourly rain.
+ * Granular: avoid heavy rain during the no-rain window (stricter on slopes); light rain after is good.
+ * Spot spray: highs 50–85°F, wind under 10 mph, no rain for 24 hours.
  */
-export function applicationWindow({ weather, product, zoneIds, zones, today, now, kind }) {
+export function applicationWindow({ weather, product, zoneIds = [], zones, today, now, kind, days = 7 }) {
   const selected = zones.filter((z) => zoneIds.includes(z.id));
   const sloped = selected.some(isSloped);
   const type = kind || product?.type || 'fertilizer';
-  const granular = type === 'fertilizer' || type === 'preemergent';
+  const spray = type === 'weed';
   let hours = product?.noRainHours > 0 ? product.noRainHours : 24;
-  if (granular && sloped) hours = Math.max(48, hours * 2);
+  if (spray) hours = Math.max(SPRAY_RULES.dryHours, hours);
+  else if (sloped) hours = Math.max(48, hours * 2);
   const heavy = sloped ? 0.3 : 0.5;
-  const base = { sloped, hours, heavy, type, days: [], best: null };
-  if (!weather?.hours?.length) return { ...base, available: false, summary: 'No forecast available — check for heavy rain before applying.' };
+  const base = { sloped: !spray && sloped, hours, heavy, type, days: [], best: null };
+  if (!weather?.hours?.length) return { ...base, available: false, summary: 'No forecast available — check the rain forecast before applying.' };
 
   const hourNow = localHour(weather, now);
   const rainFrom = (startIdx, n) => {
@@ -543,7 +599,7 @@ export function applicationWindow({ weather, product, zoneIds, zones, today, now
     return m;
   };
 
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < days; i++) {
     const date = addDays(today, i);
     const day = weather.dayMap?.[date];
     if (!day) continue;
@@ -560,13 +616,11 @@ export function applicationWindow({ weather, product, zoneIds, zones, today, now
     const coverageShort = win.hours < hours;
     let rating = 'good';
     let note;
-    if (granular) {
-      if (peak >= heavy) { rating = 'avoid'; note = `${fmtNum(peak, 2)}″ heavy rain within ${hours} h${sloped ? ' (sloped zones)' : ''}`; } else if (day.tMax >= 88) { rating = 'avoid'; note = `Too hot (${f0(day.tMax)}°F)`; } else if (day.tMin <= 28 && md(date) >= 1001) { rating = 'avoid'; note = 'Hard freeze — never spread on frozen ground'; } else if (win.total >= 0.1) { rating = 'ok'; note = `${fmtNum(win.total, 2)}″ light rain within ${hours} h — fine if it stays light`; } else if (after3 >= 0.1 && after3 < heavy) { note = `Dry, then ${fmtNum(after3, 2)}″ light rain to water it in`; } else { note = 'Dry — water in with about ¼″ afterward'; }
-    } else {
+    if (spray) {
       const wind = day.wind ?? 0;
-      if (win.total >= 0.05) { rating = 'avoid'; note = `Rain within ${hours} h would wash it off`; } else if (wind >= 12) { rating = 'avoid'; note = `Windy (${f0(wind)} mph) — spray drift`; } else if (day.tMax > 85) { rating = 'avoid'; note = `Too hot (${f0(day.tMax)}°F) — can injure turf`; } else if (day.tMax < 55) { rating = 'ok'; note = `Cool (${f0(day.tMax)}°F) — slower, still works above 50°F`; } else { note = `Dry for ${hours} h, ${f0(day.tMax)}°F`; }
-    }
-    if (coverageShort && rating === 'good') note += ' (forecast ends before window does)';
+      if (win.total >= 0.02) { rating = 'avoid'; note = `Rain within ${hours} h would wash it off`; } else if (wind >= SPRAY_RULES.maxWind) { rating = 'avoid'; note = `Windy (${f0(wind)} mph) — spray drifts`; } else if (day.tMax > SPRAY_RULES.maxHigh) { rating = 'avoid'; note = `Too hot (${f0(day.tMax)}°F) — can injure the grass`; } else if (day.tMax < SPRAY_RULES.minHigh) { rating = 'avoid'; note = `Too cool (${f0(day.tMax)}°F) — weeds won't take it up`; } else { note = `${f0(day.tMax)}°, ${f0(wind)} mph wind, dry ${hours} h`; }
+    } else if (peak >= heavy) { rating = 'avoid'; note = `${fmtNum(peak, 2)}″ heavy rain within ${hours} h${sloped ? ' (sloped zones)' : ''}`; } else if (day.tMax >= 88) { rating = 'avoid'; note = `Too hot (${f0(day.tMax)}°F)`; } else if (day.tMin <= 28 && md(date) >= 1001) { rating = 'avoid'; note = 'Hard freeze — never spread on frozen ground'; } else if (win.total >= 0.1) { rating = 'ok'; note = `${fmtNum(win.total, 2)}″ light rain within ${hours} h — fine if it stays light`; } else if (after3 >= 0.1 && after3 < heavy) { note = `Dry, then ${fmtNum(after3, 2)}″ light rain to water it in`; } else { note = 'Dry — water in with about ¼″ afterward'; }
+    if (coverageShort && rating === 'good') note += ' (forecast ends before the window does)';
     base.days.push({ date, rating, note });
   }
 
@@ -583,6 +637,58 @@ export function applicationWindow({ weather, product, zoneIds, zones, today, now
   return { ...base, available: true, summary };
 }
 
+/**
+ * Good day to pull weeds: soil softened by rain (or watering) in the last two days, and not pouring today.
+ */
+export function pullDay(weather, date, logs = [], zones = []) {
+  const t = dayTable(weather, addDays(date, -2), date);
+  const [d2, d1, d0] = t;
+  const watered = (d) => sum(logs.filter((l) => l.type === 'water' && l.date === d), (l) => lawnInchesFromLog(l, zones));
+  const recent = (d1.est ? 0 : d1.rain) + watered(d1.date) + 0.5 * ((d2.est ? 0 : d2.rain) + watered(d2.date));
+  const sameDay = d0.est ? 0 : d0.rain;
+  if (d0.tMax < 40) return { good: false, soft: false, note: 'Ground is cold or frozen' };
+  if (sameDay >= 0.3) return { good: false, soft: true, note: 'Raining — wait until it lets up' };
+  if (recent >= 0.25) return { good: true, soft: true, note: `Soft soil after ${fmtNum(recent, 2)}″ of rain — roots come out whole` };
+  return { good: false, soft: false, note: 'Soil is firm — easier after a rain' };
+}
+
+/** Lawn verdicts for a forecast day: mowing, spot spraying, pulling weeds, feeding, plus frost risk. */
+export function dayVerdicts(ctx, date) {
+  const { weather, zones, logs, products, today, now } = ctx;
+  const t = dayTable(weather, addDays(date, -1), date);
+  const [prev, day] = t;
+  const w = weatherScore(day, prev);
+  const mowOk = w.score > -1.6 && day.tMax >= 45 && !w.flags.includes('wet') && !w.flags.includes('soggy');
+  let mow;
+  if (day.tMax < 45) mow = { ok: false, text: 'Too cold — grass isn’t growing' };
+  else if (w.flags.includes('wet')) mow = { ok: false, text: 'Wet — skip mowing' };
+  else if (w.flags.includes('soggy')) mow = { ok: false, text: 'Soggy after heavy rain' };
+  else if (w.flags.includes('hot')) mow = { ok: false, text: 'Very hot — mow in the evening if you must' };
+  else mow = { ok: mowOk, text: mowOk ? 'Good mow day' : 'Fair — damp or showery' };
+
+  const sprayP = products.find((p) => p.type === 'weed') || { noRainHours: 24, type: 'weed' };
+  const allIds = lawnZones(zones).map((z) => z.id);
+  const n = daysBetween(today, date);
+  let spray = { ok: false, text: 'No forecast for spraying' };
+  let feed = { ok: false, text: 'No forecast' };
+  if (n >= 0 && n < 14) {
+    const sw = applicationWindow({ weather, product: sprayP, zoneIds: allIds, zones, today, now, kind: 'weed', days: n + 1 });
+    const sd = sw.days.find((d) => d.date === date);
+    if (sd) spray = sd.rating === 'good' ? { ok: true, text: 'Good for spot spraying' } : { ok: false, text: sd.note };
+    const fw = applicationWindow({ weather, product: { noRainHours: 24, type: 'fertilizer' }, zoneIds: allIds, zones, today, now, kind: 'fertilizer', days: n + 1 });
+    const fd = fw.days.find((d) => d.date === date);
+    if (fd) feed = fd.rating === 'avoid' ? { ok: false, text: `Hold off on feeding: ${fd.note.charAt(0).toLowerCase()}${fd.note.slice(1)}` } : { ok: true, text: 'Fine for feeding' };
+  }
+  const p = pullDay(weather, date, logs, zones);
+  const pull = { ok: p.good, text: p.good ? 'Good for pulling weeds' : p.note };
+  let frost;
+  if (day.tMin <= 28) frost = { level: 'hard', text: `Hard freeze (${f0(day.tMin)}°F)` };
+  else if (day.tMin <= 32) frost = { level: 'frost', text: `Frost likely (${f0(day.tMin)}°F)` };
+  else if (day.tMin <= 36) frost = { level: 'possible', text: `Patchy frost possible (${f0(day.tMin)}°F)` };
+  else frost = { level: 'none', text: 'No frost risk' };
+  return { mow, spray, pull, feed, frost };
+}
+
 /* ======================= timers ======================= */
 
 export function computeTimers(log, product, zones) {
@@ -590,11 +696,11 @@ export function computeTimers(log, product, zones) {
   const timers = [];
   if (!product) return timers;
   const sloped = zones.filter((z) => (log.zones || []).includes(z.id)).some(isSloped);
-  const granular = product.type === 'fertilizer' || product.type === 'preemergent';
+  const granular = product.type !== 'weed';
   if (product.keepOffHours > 0) timers.push({ kind: 'keepOff', until: at + product.keepOffHours * 3600e3 });
   let nr = product.noRainHours || 0;
   if (nr > 0 && granular && sloped) nr = Math.max(48, nr * 2);
-  if (nr > 0) timers.push({ kind: 'noRain', until: at + nr * 3600e3, granular, sloped });
+  if (nr > 0) timers.push({ kind: 'noRain', until: at + nr * 3600e3, granular, sloped: granular && sloped });
   if (product.noMowDays > 0) timers.push({ kind: 'noMow', until: at + product.noMowDays * 86400e3 });
   return timers;
 }
@@ -617,303 +723,31 @@ export function activeTimers(logs, now) {
 
 /* ======================= watering ======================= */
 
-export function wateringPlan(ctx) {
-  const { today, settings, zones, logs } = ctx;
-  const cond = ctx.cond || conditions(ctx);
-  const m = md(today);
-  const y = yearOf(today);
-  const blowout = sortLogs(logs.filter((l) => l.type === 'other' && l.kind === 'blowout' && yearOf(l.date) === y && md(l.date) >= 801 && l.date <= today))[0];
-  const rate = waterRateInfo(settings, zones);
-  if (blowout) return { off: true, rate, reason: `Sprinklers blown out ${fmtMonthDay(blowout.date)} — irrigation is off until spring.` };
-  if (m < 501 || m >= 1101) return { off: true, rate, reason: 'Irrigation season runs May through October.' };
-
-  const etc = cond.etNext7;
-  const rain = cond.rainNext7 * 0.8;
-  const past3 = cond.past.slice(-3);
-  const carry = clamp(sum(past3, (d) => d.rain) - sum(past3, (d) => d.et0) * KC, 0, 0.5);
-  const need = Math.max(0, etc - rain - carry);
-  const rows = zones.map((z) => {
-    if (!isLawn(z)) {
-      const minutes = z.weeklyMinutes || 0;
-      return { zone: z, inches: null, minutes, gallons: minutes * (z.gpm || 0), cycles: null };
-    }
-    const inches = need * (SUN_FACTOR[z.sun] ?? 1);
-    const minutes = runtimeFor(z, inches);
-    return { zone: z, inches, minutes, gallons: gallonsFor(z, inches), cycles: minutes > 0 ? cycleSoak(z, minutes) : null };
-  });
-  const gallons = sum(rows, (r) => r.gallons);
-  return {
-    off: false, need, etc, rain: cond.rainNext7, carry, rows, gallons,
-    cost: (gallons / 1000) * rate.per1000, rate, est: !cond.hasWeather,
-  };
-}
-
-/* ======================= plan ======================= */
-
-const soilTrigger = (c, target, hint) => {
-  if (c.soil24 == null) return { met: null, text: `When soil reaches ${target}°F. ${hint}` };
-  const reach = c.soilReach(target);
-  return {
-    met: c.soil24 >= target,
-    soon: !!reach,
-    text: `Soil ${f0(c.soil24)}°F (24-h avg) → trigger ${target}°F${reach && c.soil24 < target ? `, expected ~${fmtMonthDay(reach.date)}` : ''}. ${hint}`,
-  };
-};
-
-export const PLAN_TASKS = [
-  {
-    id: 'spring-cleanup', season: 'spring', title: 'Spring cleanup', kind: 'other', otherKind: 'cleanup', window: ['0320', '0510'],
-    why: 'Rake matted patches to prevent snow mold, clear debris, and check for vole trails. Wait until the soil is firm so you don’t compact it.',
-    trigger: (c) => (c.soil24 == null ? { met: null, text: 'Once snow is gone and the soil has thawed' } : { met: c.soil24 >= 40, text: `Soil ${f0(c.soil24)}°F (thawed at 40°F+)` }),
-  },
-  {
-    id: 'sharpen-spring', season: 'spring', title: 'Sharpen mower blade', kind: 'other', otherKind: 'sharpen', window: ['0301', '0510'], doneFrom: '0101',
-    why: 'A sharp blade cuts cleanly. A dull one shreds tips, which brown and invite disease.',
-    trigger: () => ({ met: true, text: 'Before the first mow' }),
-  },
-  {
-    id: 'pre-emergent', season: 'spring', title: 'Crabgrass pre-emergent', kind: 'weed', productType: 'preemergent', window: ['0410', '0525'], grace: 7,
-    why: 'Crabgrass sprouts once soil holds about 55°F, so the pre-emergent has to be down and watered in first. Skip it where you plan to seed.',
-    trigger: (c) => soilTrigger(c, 50, 'Apply at 50–55°F.'),
-  },
-  {
-    id: 'first-mow', season: 'spring', title: 'First mow at about 3″', kind: 'mow', window: ['0410', '0520'],
-    why: 'Start when grass reaches about 4″. Cutting at 3″ keeps bluegrass dense and shades out weed seeds.',
-    trigger: (c) => soilTrigger(c, 50, 'Bluegrass grows actively above that.'),
-  },
-  {
-    id: 'irrigation-startup', season: 'spring', title: 'Start up sprinklers', kind: 'other', otherKind: 'startup', window: ['0501', '0601'],
-    why: 'Wait until frosts are over, then check every Rachio zone for broken heads, leaks, and coverage before summer.',
-    trigger: (c) => (!c.hasWeather ? { met: null, text: 'After the last frost' } : c.frost ? { met: false, text: `Frost (${f0(c.frost.tMin)}°F) forecast ${fmtMonthDay(c.frost.date)}` } : { met: true, text: 'No frost in the 10-day forecast' }),
-  },
-  {
-    id: 'fert-late-spring', season: 'spring', title: 'Late-spring feeding', kind: 'fert', productType: 'fertilizer', window: ['0515', '0610'], grace: 10,
-    why: 'Feeding around Memorial Day, after the spring flush, carries bluegrass into summer without forcing soft growth. Early-spring feeding is skipped on purpose.',
-    trigger: (c, today) => (c.soil24 == null
-      ? { met: md(today) >= 520, text: 'Around Memorial Day, soil about 60°F' }
-      : { met: c.soil24 >= 60 || md(today) >= 520, text: `Soil ${f0(c.soil24)}°F (trigger 60°F or May 20)` }),
-  },
-  {
-    id: 'weed-spring', season: 'spring', title: 'Broadleaf weeds (spot treat)', kind: 'weed', productType: 'weed', window: ['0515', '0630'],
-    why: 'Spot-treat dandelions and clover while they’re growing actively. Fall is the stronger window for perennial weeds.',
-    trigger: (c) => (c.hasWeather ? { met: c.highs5 >= 60 && c.highs5 <= 85, text: `Highs ~${f0(c.highs5)}°F (best 60–85°F, calm, dry)` } : { met: null, text: 'Highs 60–85°F, calm and dry' }),
-  },
-  {
-    id: 'summer-height', season: 'summer', title: 'Raise mowing height for heat', kind: 'info', window: ['0615', '0831'],
-    why: 'Taller grass (3.5–4″) shades the soil, keeps roots cooler, and holds moisture through hot spells.',
-    trigger: (c) => (c.hasWeather ? { met: c.maxHigh7 >= 85, text: `Highs up to ${f0(c.maxHigh7)}°F this week (trigger 85°F)` } : { met: null, text: 'When highs reach 85°F' }),
-  },
-  {
-    id: 'fert-summer', season: 'summer', title: 'Light summer feeding', optional: true, kind: 'fert', productType: 'fertilizer', window: ['0701', '0720'], grace: 7,
-    why: 'Irrigated bluegrass can use a light early-July feeding. Skip it in heat waves or drought.',
-    trigger: (c) => (c.hasWeather ? { met: c.highs5 < 85, text: `Highs ~${f0(c.highs5)}°F (need under 85°F)` } : { met: null, text: 'When highs stay under 85°F' }),
-  },
-  {
-    id: 'fert-early-fall', season: 'fall', title: 'Early-fall feeding', kind: 'fert', productType: 'fertilizer', window: ['0825', '0920'], grace: 15,
-    why: 'The most important feeding for bluegrass: it rebuilds roots and density after summer. If you feed once a year, make it this one.',
-    trigger: (c) => (c.hasWeather ? { met: c.highs5 < 85, text: `Highs ~${f0(c.highs5)}°F (need under 85°F)` } : { met: null, text: 'Once summer heat breaks' }),
-  },
-  {
-    id: 'aerate', season: 'fall', title: 'Core aerate', optional: true, kind: 'other', otherKind: 'aerate', window: ['0825', '1005'], grace: 0,
-    why: 'Relieves compaction in clay soil so water and fertilizer reach the roots. Every 1–2 years is plenty.',
-    trigger: (c) => (c.soil24 == null ? { met: null, text: 'Soil 50–70°F and moist' } : { met: c.soil24 >= 50 && c.soil24 <= 70, text: `Soil ${f0(c.soil24)}°F (best 50–70°F, moist)` }),
-  },
-  {
-    id: 'weed-fall', season: 'fall', title: 'Fall broadleaf weed control', kind: 'weed', productType: 'weed', window: ['0910', '1020'], grace: 7,
-    why: 'Perennial weeds pull herbicide down to their roots as they store food for winter, so fall gives the best kill. Spray before a hard freeze.',
-    trigger: (c) => {
-      if (!c.hasWeather) return { met: null, text: 'Highs 50–80°F, before a hard freeze' };
-      const ok = c.highs5 >= 50 && c.highs5 <= 80 && !c.pastHardFreeze;
-      const freeze = c.hardFreeze ? ` Hard freeze forecast ${fmtMonthDay(c.hardFreeze.date)} — spray before then.` : '';
-      return { met: ok, text: `Highs ~${f0(c.highs5)}°F (best 50–80°F).${freeze}` };
-    },
-  },
-  {
-    id: 'fert-late-fall', season: 'fall', title: 'Late-season feeding', kind: 'fert', productType: 'fertilizer', window: ['1010', '1105'], grace: 7,
-    why: 'Top growth has slowed but roots still take up nitrogen, so the lawn greens up early next spring. Never spread on frozen ground; it runs off into the lake.',
-    trigger: (c) => (c.soil24 == null
-      ? { met: null, text: 'When soil cools to about 50°F and the grass is still green' }
-      : { met: c.soil24 <= 50 && !c.frozen, soon: c.soil24 <= 55, text: `Soil ${f0(c.soil24)}°F (trigger 50°F or below, not frozen)` }),
-  },
-];
-
-export const FALL_CHECKLIST = [
-  {
-    id: 'fall-fert', title: 'Fall fertilizer feeding', log: { type: 'fert' },
-    detail: 'Early fall (Labor Day to late September) plus an optional late-season feeding in October.',
-    match: (l) => l.type === 'fert' && md(l.date) >= 815,
-  },
-  {
-    id: 'final-mow', title: 'Final lower mow (about 2.5″)', log: { type: 'mow', final: true },
-    detail: 'Late October or November. Step down gradually so you never cut more than a third; short grass resists snow mold and voles.',
-    match: (l) => l.type === 'mow' && (l.final || (md(l.date) >= 1010 && l.height <= 2.75)),
-  },
-  {
-    id: 'blowout', title: 'Sprinkler blowout before the first hard freeze', log: { type: 'other', kind: 'blowout' },
-    detail: 'Blow out the Rachio zones before the first night at 28°F or colder.',
-    match: (l) => l.type === 'other' && l.kind === 'blowout' && md(l.date) >= 815,
-  },
-  {
-    id: 'battery', title: 'EGO battery winter storage', log: { type: 'other', kind: 'battery' },
-    detail: 'Take the battery off the mower and charger. Store it indoors, above freezing and out of heat, partly charged (not full or empty). Wipe the deck clean.',
-    match: (l) => l.type === 'other' && l.kind === 'battery' && md(l.date) >= 815,
-  },
-  {
-    id: 'spreader', title: 'Clean the spreader', log: { type: 'other', kind: 'spreader' },
-    detail: 'Rinse the Elite after the last application, let it dry, and lube the wheels and gate pivot so it doesn’t corrode over winter.',
-    match: (l) => l.type === 'other' && l.kind === 'spreader' && md(l.date) >= 815,
-  },
-];
-
-const mdToDate = (y, s) => `${y}-${s.slice(0, 2)}-${s.slice(2)}`;
-
-export function productFor(task, settings, products) {
-  if (!task.productType) return null;
-  const assigned = products.find((p) => p.id === settings.planProducts?.[task.id]);
-  if (assigned) return assigned;
-  return products.find((p) => p.type === task.productType) || null;
-}
-
-function taskMatchesLog(task, l) {
-  if (task.kind === 'fert') return l.type === 'fert';
-  if (task.kind === 'weed') {
-    if (l.type !== 'weed') return false;
-    const pre = l.productType === 'preemergent' || /pre-?emerg|crabgrass/i.test(`${l.productName || ''} ${l.notes || ''}`);
-    return task.productType === 'preemergent' ? pre : !pre;
-  }
-  if (task.kind === 'mow') return l.type === 'mow';
-  if (task.kind === 'other') return l.type === 'other' && l.kind === task.otherKind;
-  return false;
-}
-
-/** All season tasks with live status for `today`. */
-export function planTasks(ctx) {
-  const { today, settings, products, zones, logs } = ctx;
-  const cond = ctx.cond || conditions(ctx);
-  const y = yearOf(today);
-  const area = lawnArea(zones);
-  const checks = settings.planChecks?.[y] || {};
-  const used = new Set();
-  const yearLogs = sortLogs(logs.filter((l) => yearOf(l.date) === y)).reverse();
-
-  return PLAN_TASKS.map((t) => {
-    const ws = mdToDate(y, t.window[0]);
-    const we = mdToDate(y, t.window[1]);
-    const graceEnd = addDays(we, t.grace ?? 10);
-    const doneFrom = t.doneFrom ? mdToDate(y, t.doneFrom) : addDays(ws, -21);
-    const doneLog = t.kind === 'info' ? null : yearLogs.find((l) => !used.has(l.id) && l.date >= doneFrom && l.date <= addDays(graceEnd, 20) && taskMatchesLog(t, l));
-    if (doneLog) used.add(doneLog.id);
-    const trig = t.trigger(cond, today);
-    const product = productFor(t, settings, products);
-    const lbs = product ? amountFor(product, area) : null;
-
-    let status;
-    if (doneLog || checks[t.id]) status = 'done';
-    else if (today > graceEnd) status = 'past';
-    else if (today >= ws) status = trig.met === false ? 'waiting' : today > we ? 'late' : 'now';
-    else if (trig.met === true && daysBetween(today, ws) <= 21 && t.kind !== 'info' && t.id !== 'sharpen-spring') status = 'now';
-    else if (daysBetween(today, ws) <= 14 || trig.soon) status = 'soon';
-    else status = 'later';
-    if (t.kind === 'info' && status === 'waiting') status = 'later';
-
-    return {
-      ...t,
-      status,
-      trigger: trig,
-      windowText: `${fmtMonthDay(ws)} – ${fmtMonthDay(we)}`,
-      ws, we, graceEnd,
-      doneLog: doneLog || null,
-      manual: !!checks[t.id] && !doneLog,
-      product,
-      lbs,
-      area,
-    };
-  });
-}
-
-export function fallChecklist(ctx) {
-  const { today, settings, logs } = ctx;
-  const cond = ctx.cond || conditions(ctx);
-  const y = yearOf(today);
-  const checks = settings.planChecks?.[y] || {};
-  return FALL_CHECKLIST.map((item) => {
-    const log = sortLogs(logs.filter((l) => yearOf(l.date) === y && l.date <= today && item.match(l)))[0] || null;
-    let urgent = null;
-    if (!log && !checks[item.id] && item.id === 'blowout' && cond.hardFreeze && md(today) >= 815) {
-      urgent = `Hard freeze (${f0(cond.hardFreeze.tMin)}°F) forecast ${relDayLower(cond.hardFreeze.date, today)} — blow out before then.`;
-    }
-    return { ...item, done: !!log || !!checks[item.id], log, manual: !!checks[item.id] && !log, urgent };
-  });
-}
-
-/* ======================= alerts ======================= */
-
-export function nextFertProduct(ctx, tasks) {
-  const list = tasks || planTasks(ctx);
-  const order = { now: 0, late: 0, waiting: 1, soon: 2, later: 3 };
-  const t = list.filter((x) => x.kind === 'fert' && order[x.status] != null && x.product)
-    .sort((a, b) => order[a.status] - order[b.status])[0];
-  return t?.product || ctx.products.find((p) => p.type === 'fertilizer') || null;
-}
-
-export function alerts(ctx) {
+/**
+ * Water the lawn received over the past 7 days: rainfall from the weather data plus manually logged
+ * watering. Gallons and cost come from the zones' flow rates and the water rate tiers.
+ */
+export function waterWeek(ctx) {
   const { today, now, settings, zones, logs, weather } = ctx;
+  const from = addDays(today, -6);
+  const rain = rainSoFar(weather, from, today, now);
+  const runs = logs.filter((l) => l.type === 'water' && l.date >= from && l.date <= today);
+  const watered = sum(runs, (l) => lawnInchesFromLog(l, zones));
+  const gallons = sum(runs, (l) => wateringCalc(zones, l.zones || [], l.minutes || 0).gallons);
+  const rate = waterRateInfo(settings, zones);
   const cond = ctx.cond || conditions(ctx);
-  const tasks = ctx.tasks || planTasks(ctx);
-  const out = [];
-  const m = md(today);
-
-  // Crabgrass pre-emergent by soil temperature.
-  const pre = tasks.find((t) => t.id === 'pre-emergent');
-  if (pre && pre.status !== 'done' && m >= 315 && m <= 615 && cond.soil24 != null) {
-    const prod = pre.product ? `${pre.product.name}` : 'a pre-emergent (add one in Yard → Products)';
-    const reach50 = cond.soilReach(50);
-    if (cond.soil24 >= 55) out.push({ id: 'soil55', level: 'red', icon: 'thermo', title: `Soil is ${f0(cond.soil24)}°F — crabgrass is germinating`, body: `Apply ${prod} right away and water it in.`, action: { type: 'weed' } });
-    else if (cond.soil24 >= 50) out.push({ id: 'soil50', level: 'orange', icon: 'thermo', title: `Soil ${f0(cond.soil24)}°F and rising toward 55°F`, body: `Time to apply ${prod}. Crabgrass sprouts once soil holds 55°F.`, action: { type: 'weed' } });
-    else if (reach50) out.push({ id: 'soil-soon', level: 'blue', icon: 'thermo', title: `Soil reaches 50°F around ${relDayLower(reach50.date, today)}`, body: `Now ${f0(cond.soil24)}°F (24-h avg). Have ${prod} ready before soil holds 55°F.` });
-  }
-
-  // Rain-aware fertilizer timing.
-  const fertTask = tasks.find((t) => t.kind === 'fert' && (t.status === 'now' || t.status === 'late'));
-  if (fertTask && fertTask.product) {
-    const ids = lawnZones(zones).map((z) => z.id);
-    const win = applicationWindow({ weather, product: fertTask.product, zoneIds: ids, zones, today, now });
-    out.push({
-      id: 'fert-window', level: win.best ? 'green' : 'orange', icon: 'bag',
-      title: `${fertTask.title}${fertTask.status === 'late' ? ' (late, still OK)' : ''}`,
-      body: `${win.summary}${win.sloped ? ` Sloped zones use a ${win.hours}-hour no-rain window.` : ''}`,
-      action: { type: 'fert', productId: fertTask.product.id },
-    });
-  }
-
-  // Low inventory for products the plan needs soon.
-  const seen = new Set();
-  for (const t of tasks) {
-    if (!t.product || seen.has(t.product.id) || !['now', 'late', 'soon', 'waiting'].includes(t.status) || t.optional) continue;
-    const need = t.lbs || 0;
-    if (need > 0 && (t.product.onHand || 0) < need - 0.01) {
-      seen.add(t.product.id);
-      const short = need - (t.product.onHand || 0);
-      const bags = Math.ceil(short / (t.product.size || 1));
-      out.push({
-        id: `inv-${t.product.id}`, level: 'orange', icon: 'box',
-        title: `Low inventory: ${t.product.name}`,
-        body: `${fmtNum(t.product.onHand || 0, 1)} ${t.product.unit} on hand; ${t.title.toLowerCase()} needs ${fmtNum(need, 1)} ${t.product.unit}. Buy ${bags} ${bags === 1 ? 'bag' : 'bags'}.`,
-        action: { type: 'product', productId: t.product.id },
-      });
-    }
-  }
-
-  // Blade sharpening.
-  const hrs = mowerHours(settings, logs);
-  if (hrs.due) out.push({ id: 'sharpen', level: 'orange', icon: 'blade', title: 'Sharpen the mower blade', body: `${fmtNum(hrs.since, 1)} hours since the last sharpening (every ${fmtNum(hrs.every, 0)} h).`, action: { type: 'other', kind: 'sharpen' } });
-  else if (hrs.soon) out.push({ id: 'sharpen-soon', level: 'blue', icon: 'blade', title: 'Blade sharpening coming up', body: `${fmtNum(hrs.since, 1)} of ${fmtNum(hrs.every, 0)} hours used.` });
-
-  // Hard freeze → blowout.
-  const blow = fallChecklist({ ...ctx, cond }).find((i) => i.id === 'blowout');
-  if (blow?.urgent) out.push({ id: 'freeze', level: 'red', icon: 'snow', title: 'Schedule the sprinkler blowout', body: blow.urgent, action: { type: 'other', kind: 'blowout' } });
-
-  return out;
+  return {
+    total: rain + watered,
+    rain,
+    watered,
+    runs: runs.length,
+    gallons,
+    cost: (gallons / 1000) * rate.per1000,
+    rate,
+    used: cond.etPast7,
+    hasWeather: !!weather,
+    rachio: false,
+  };
 }
 
 /* ======================= totals ======================= */
@@ -930,12 +764,15 @@ export function seasonTotals({ logs, zones, products, settings }, year) {
     if (!(l.amount > 0)) continue;
     const key = l.productId || l.productName;
     const p = products.find((x) => x.id === l.productId);
-    const row = byProduct.get(key) || { name: p?.name || l.productName || 'Product', unit: l.unit || p?.unit || 'lb', amount: 0, apps: 0, cost: 0 };
+    const row = byProduct.get(key) || { name: p ? shortName(p) : (l.productName || 'Product'), unit: l.unit || p?.unit || 'lb', amount: 0, apps: 0, cost: 0 };
     row.amount += l.amount;
     row.apps += 1;
     if (p && p.size > 0) row.cost += (l.amount / p.size) * (p.price || 0);
     byProduct.set(key, row);
   }
+  const water = yl.filter((l) => l.type === 'water');
+  const gallons = sum(water, (l) => wateringCalc(zones, l.zones || [], l.minutes || 0).gallons);
+  const rate = waterRateInfo(settings, zones);
   return {
     mows: mows.length,
     hours: sum(mows, (l) => l.hours),
@@ -944,12 +781,15 @@ export function seasonTotals({ logs, zones, products, settings }, year) {
     mulchCredit: mulched * MULCH_N_PER_MOW,
     target: settings.nitrogen?.seasonTarget || 3,
     products: [...byProduct.values()],
-    feeds: yl.filter((l) => l.type === 'fert').length,
-    weeds: yl.filter((l) => l.type === 'weed').length,
+    feeds: yl.filter(isFeeding).length,
+    sprays: yl.filter((l) => l.type === 'weed').length,
+    pulls: yl.filter((l) => l.type === 'pull').length,
+    waterings: water.length,
+    waterGallons: gallons,
+    waterCost: (gallons / 1000) * rate.per1000,
     others: yl.filter((l) => l.type === 'other').length,
   };
 }
 
-export const otherLabel = (kind) => OTHER_KINDS.find((k) => k.id === kind)?.label || 'Other';
-export const weekdayName = (i) => WEEKDAYS_LONG[i];
+export const otherLabel = (kind) => OTHER_KINDS.find((k) => k.id === kind)?.label || LEGACY_KIND_LABELS[kind] || 'Other';
 export { round };

@@ -1,20 +1,25 @@
-// Quick Log: the "+ Log" menu and the Mow / Fertilize / Weed control / Other sheets (also used to edit).
+// Quick Log: the "+" menu and the Mow / Fertilize / Spot spray / Pulled weeds / Watering / Other sheets
+// (also used to edit). Saving needs a 1-second press-and-hold; Undo stays available for 5 seconds.
 
 import { S, saveLog, deleteLog, restoreLog, savePhoto, deletePhoto, getPhoto } from './store.js';
 import { openSheet, bindHold, holdButtonHtml, toast, confirmDialog, segmented } from './ui.js';
-import { icon, TYPE_ICON } from './icons.js';
+import { icon, TYPE_ICON, patternIcon } from './icons.js';
 import * as E from './engine.js';
-import { OTHER_KINDS, PRODUCT_TYPES } from './defaults.js';
-import { esc, uid, clone, round, num, addDays, relDay, fmtDay, fmtNum, noonOf, nobreak } from './util.js';
+import * as Season from './season.js';
+import { OTHER_KINDS, PRODUCT_TYPES, SPREADER_TYPES, MOW_PATTERNS } from './defaults.js';
+import { esc, uid, clone, round, num, addDays, relDay, fmtDay, fmtNum, fmtMoney, noonOf, nobreak } from './util.js';
 
 export const TYPES = {
-  mow: { title: 'Mow', verb: 'Mow logged' },
-  fert: { title: 'Fertilize', verb: 'Fertilizer logged' },
-  weed: { title: 'Weed control', verb: 'Weed control logged' },
-  other: { title: 'Other', verb: 'Activity logged' },
+  mow: { title: 'Mow', sub: 'Height, time, stripe direction', verb: 'Mow logged' },
+  fert: { title: 'Fertilize', sub: 'Spreader products', verb: 'Feeding logged' },
+  weed: { title: 'Spot spray', sub: 'Hand pump sprayer', verb: 'Spot spray logged' },
+  pull: { title: 'Pulled weeds', sub: 'By hand', verb: 'Weeding logged' },
+  water: { title: 'Watering', sub: 'Manual runs until Rachio connects', verb: 'Watering logged' },
+  other: { title: 'Other', sub: 'Blowout, battery, aeration…', verb: 'Activity logged' },
 };
+const PULL_AMOUNTS = [['few', 'A few'], ['some', 'A bunch'], ['lots', 'Lots']];
 
-let hooks = { ctx: () => ({}), navigate: () => {}, openProduct: () => {} };
+let hooks = { ctx: () => ({}), openProduct: () => {} };
 export function setLogHooks(h) { hooks = { ...hooks, ...h }; }
 
 export function openLogMenu() {
@@ -24,7 +29,7 @@ export function openLogMenu() {
     content: `<div class="log-menu">${Object.entries(TYPES).map(([k, t]) => `
       <button type="button" class="log-choice" data-act="choose" data-type="${k}">
         <span class="log-choice-ic t-${k}">${icon(TYPE_ICON[k])}</span>
-        <span class="log-choice-label">${t.title}</span>
+        <span class="log-choice-text"><span class="log-choice-label">${t.title}</span><span class="log-choice-sub">${t.sub}</span></span>
         ${icon('chev', 'chev')}
       </button>`).join('')}</div>`,
   });
@@ -37,16 +42,17 @@ export function openLogMenu() {
 }
 
 function productsFor(type) {
-  if (type === 'fert') return S.products.filter((p) => p.type === 'fertilizer');
-  if (type === 'weed') return S.products.filter((p) => p.type === 'weed' || p.type === 'preemergent');
+  if (type === 'fert') return S.products.filter((p) => SPREADER_TYPES.includes(p.type));
+  if (type === 'weed') return S.products.filter((p) => p.type === 'weed');
   return [];
 }
 
 /**
  * Open a log sheet. `existing` edits a saved log; `preset` pre-fills a new one
- * (productId, productType, kind, final).
+ * (productId, kind, final).
  */
 export function openLogSheet(type, { existing = null, preset = {} } = {}) {
+  if (!TYPES[type]) type = 'other';
   const c = hooks.ctx();
   const { today } = c;
   const heights = S.settings.mower.heights.map(Number);
@@ -54,21 +60,28 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
   const zoneList = type === 'mow' || type === 'fert' ? E.lawnZones(S.zones) : S.zones;
   const lawnIds = E.lawnZones(S.zones).map((z) => z.id);
   const prev = existing ? clone(existing) : null;
+  const defaultZones = ['mow', 'fert', 'water'].includes(type) ? [...lawnIds] : [];
 
-  const d = existing ? clone(existing) : { id: uid('l'), type, date: today, zones: type === 'other' ? [] : [...lawnIds], notes: '', photoId: null };
+  const d = existing ? clone(existing) : { id: uid('l'), type, date: today, zones: defaultZones, notes: '', photoId: null };
   if (!existing) {
     if (type === 'mow') {
       d.position = rec && rec.status !== 'off' && rec.position ? rec.position : E.nearestPosition(heights, 3);
       d.clippings = S.settings.clippings;
       d.final = !!(preset.final || rec?.final);
+      d.pattern = E.nextPattern(S.logs, today);
     } else if (type === 'fert') {
-      const p = S.products.find((x) => x.id === preset.productId) || E.nextFertProduct(c, c.tasks);
+      const next = Season.nextFeeding(c.feedings || Season.feedingSchedule(c));
+      const p = S.products.find((x) => x.id === preset.productId) || next?.product || productsFor('fert')[0];
       d.productId = p?.id || null;
     } else if (type === 'weed') {
       const list = productsFor('weed');
-      const p = list.find((x) => x.id === preset.productId) || list.find((x) => x.type === preset.productType) || list[0];
+      const p = list.find((x) => x.id === preset.productId) || list[0];
       d.productId = p?.id || null;
-      d.method = p?.type === 'weed' ? 'spot' : 'broadcast';
+      d.gallons = 1;
+    } else if (type === 'water') {
+      d.minutes = 20;
+    } else if (type === 'pull') {
+      d.howMuch = '';
     } else {
       d.kind = preset.kind || 'other';
       d.title = '';
@@ -88,16 +101,21 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
   const area = () => (type === 'fert' ? E.lawnArea(S.zones, d.zones) : E.zoneArea(S.zones, d.zones));
   const totalLawn = E.lawnArea(S.zones) || 1;
   const calcHours = () => round((S.settings.mower.mowHours || 1) * (E.lawnArea(S.zones, d.zones) / totalLawn), 2);
-  const calcAmount = () => { const p = product(); return p ? round(E.amountFor(p, area()), 2) : 0; };
+  const calcAmount = () => {
+    const p = product();
+    if (!p) return 0;
+    if (type === 'weed') return round(num(d.gallons) * (p.mixRate || 0), 2);
+    return round(E.amountFor(p, area()), 2);
+  };
   // When editing, keep a typed-in amount/time fixed; otherwise it follows the selected zones.
   if (existing) {
-    st.amountManual = (type === 'fert' || type === 'weed') && Math.abs(num(existing.amount) - calcAmount()) > 0.01;
+    st.amountManual = type === 'fert' && Math.abs(num(existing.amount) - calcAmount()) > 0.01;
     st.hoursManual = type === 'mow' && Math.abs(num(existing.hours) - calcHours()) > 0.01;
   }
 
   function recompute() {
     if (type === 'mow' && !st.hoursManual) d.hours = calcHours();
-    if ((type === 'fert' || type === 'weed') && !st.amountManual) d.amount = calcAmount();
+    if (type === 'weed' || (type === 'fert' && !st.amountManual)) d.amount = calcAmount();
   }
   recompute();
 
@@ -105,10 +123,12 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
 
   function validate() {
     if (!d.date || d.date > today) return 'Pick a date that isn’t in the future.';
-    if ((type === 'mow' || type === 'fert') && !d.zones.length) return 'Select at least one zone.';
+    if ((type === 'mow' || type === 'fert' || type === 'water') && !d.zones.length) return 'Select at least one zone.';
     if (type === 'fert' && !product()) return 'Choose a product.';
     if (type === 'fert' && !(num(d.amount) > 0)) return 'Enter the amount used.';
     if (type === 'mow' && !(d.position >= 1)) return 'Choose a mower position.';
+    if (type === 'water' && !(num(d.minutes) > 0)) return 'Enter how long each zone ran.';
+    if (type === 'weed' && d.productId && !(num(d.gallons) > 0)) return 'Enter how much mix you sprayed.';
     return null;
   }
 
@@ -123,8 +143,8 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
         <div class="chips">
           <button type="button" class="chip ${d.date === today ? 'on' : ''}" data-act="date" data-date="${today}">Today</button>
           <button type="button" class="chip ${d.date === y ? 'on' : ''}" data-act="date" data-date="${y}">Yesterday</button>
-          <label class="chip chip-date ${other ? 'on' : ''}">${other ? esc(fmtDay(d.date)) : 'Other date'}
-            <input type="date" data-field="date" max="${today}" value="${d.date}" aria-label="Pick a date">
+          <label class="chip chip-date ${other ? 'on' : ''}">${other ? esc(fmtDay(d.date, { year: d.date.slice(0, 4) !== today.slice(0, 4) })) : 'Earlier date…'}
+            <input type="date" data-field="date" max="${today}" value="${d.date}" aria-label="Pick any past date">
           </label>
         </div>
       </div>`;
@@ -134,23 +154,30 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     const dup = duplicate();
     if (!dup) return '';
     const what = type === 'other' ? E.otherLabel(d.kind).toLowerCase() : TYPES[type].title.toLowerCase();
-    return `<div class="banner banner-warn" role="alert">${icon('alert')}<div><strong>Already logged ${relDay(d.date, today).toLowerCase() === 'today' ? 'today' : `on ${esc(fmtDay(d.date))}`}.</strong> You have a ${esc(what)} entry for this date. Saving adds a second one.</div></div>`;
+    return `<div class="banner banner-warn" role="alert">${icon('alert')}<div><strong>Already logged ${d.date === today ? 'today' : `on ${esc(fmtDay(d.date))}`}.</strong> You have a ${esc(what)} entry for this date. Saving adds a second one.</div></div>`;
   };
 
-  const zonesHtml = (optional = false) => {
+  const zonesHtml = (optional = false, label = 'Zones') => {
     const all = zoneList.length && zoneList.every((z) => d.zones.includes(z.id));
     const sel = zoneList.filter((z) => d.zones.includes(z.id));
     const sqft = E.zoneArea(sel);
     return `
       <div class="field">
-        <div class="field-head"><span class="field-label">Zones${optional ? ' <span class="muted">(optional)</span>' : ''}</span>
+        <div class="field-head"><span class="field-label">${label}${optional ? ' <span class="muted">(optional)</span>' : ''}</span>
           <button type="button" class="link-btn" data-act="all-zones">${all ? 'Clear' : 'Select all'}</button></div>
         <div class="chips">${zoneList.map((z) => `
           <button type="button" class="chip ${d.zones.includes(z.id) ? 'on' : ''}" data-act="zone" data-id="${z.id}" aria-pressed="${d.zones.includes(z.id)}">
             ${esc(z.name)}${E.isSloped(z) ? icon('slope', 'chip-ic') : ''}</button>`).join('')}</div>
-        <div class="hint">${sel.length ? `${sel.length} ${sel.length === 1 ? 'zone' : 'zones'} · ${fmtNum(sqft, 0)} sq ft` : 'No zones selected'}</div>
+        <div class="hint">${sel.length ? `${sel.length} ${sel.length === 1 ? 'zone' : 'zones'} · ${fmtNum(sqft, 0)} sq ft` : optional ? 'None selected' : 'No zones selected'}</div>
       </div>`;
   };
+
+  const stepper = (field, value, unit, step, label) => `
+    <div class="stepper">
+      <button type="button" class="step" data-act="step" data-field="${field}" data-step="${-step}" aria-label="Less">−</button>
+      <input class="step-input" data-field="${field}" type="text" inputmode="decimal" value="${fmtNum(value, 2)}" aria-label="${esc(label)}"><span class="unit">${unit}</span>
+      <button type="button" class="step" data-act="step" data-field="${field}" data-step="${step}" aria-label="More">+</button>
+    </div>`;
 
   const mowHtml = () => {
     const showFinal = Number(today.slice(5, 7)) >= 10 || d.final;
@@ -162,13 +189,15 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
             <span class="pos-n">${i + 1}</span><span class="pos-h">${h}″</span>${rec && rec.status !== 'off' && rec.position === i + 1 ? '<span class="pos-rec">Rec</span>' : ''}
           </button>`).join('')}</div>
       </div>
+      <div class="field">
+        <div class="field-label">Front-yard stripes <span class="muted">· ${esc(MOW_PATTERNS[d.pattern ?? 0]?.label || '')}</span></div>
+        <div class="pattern-pick" role="radiogroup" aria-label="Stripe direction">${MOW_PATTERNS.map((p) => `
+          <button type="button" role="radio" aria-checked="${d.pattern === p.id}" class="pattern-opt ${d.pattern === p.id ? 'on' : ''}" data-act="pattern" data-pattern="${p.id}" aria-label="${esc(p.label)}">${patternIcon(p.angle, 40)}</button>`).join('')}</div>
+        <div class="hint">Side Left and Side Right: always mow across the slope.</div>
+      </div>
       <div class="field field-row">
         <span class="field-label">Time</span>
-        <div class="stepper">
-          <button type="button" class="step" data-act="hours" data-step="-0.25" aria-label="Less time">−</button>
-          <input class="step-input" data-field="hours" type="text" inputmode="decimal" value="${fmtNum(d.hours, 2)}" aria-label="Hours"><span class="unit">h</span>
-          <button type="button" class="step" data-act="hours" data-step="0.25" aria-label="More time">+</button>
-        </div>
+        ${stepper('hours', d.hours, 'h', 0.25, 'Hours')}
       </div>
       <div class="field field-row">
         <span class="field-label">Clippings</span>
@@ -181,7 +210,7 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
   const productListHtml = (allowNone) => {
     const list = productsFor(type);
     if (!list.length && !allowNone) {
-      return `<div class="banner banner-info">${icon('box')}<div>No ${type === 'fert' ? 'fertilizer' : 'weed control'} products yet. <button type="button" class="link-btn" data-act="add-product">Add one in Yard</button></div></div>`;
+      return `<div class="banner banner-info">${icon('box')}<div>No spreader products yet. <button type="button" class="link-btn" data-act="add-product">Add one in Yard</button></div></div>`;
     }
     return `
       <div class="field">
@@ -191,60 +220,107 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
             <button type="button" class="choice ${d.productId === p.id ? 'on' : ''}" data-act="product" data-id="${p.id}" aria-pressed="${d.productId === p.id}">
               <span class="choice-main">
                 <span class="choice-title">${esc(nobreak(p.name))}</span>
-                <span class="choice-sub">${p.n}-${p.p}-${p.k} · ${PRODUCT_TYPES[p.type]} · Elite ${esc(p.elite || '–')} · ${fmtNum(p.onHand || 0, 1)} ${esc(p.unit)} on hand</span>
+                <span class="choice-sub">${type === 'weed' ? `${fmtNum(p.mixRate || 0, 2)} fl oz per gallon` : `${p.n}-${p.p}-${p.k} · ${PRODUCT_TYPES[p.type]} · Elite ${esc(p.elite || '–')}`} · ${fmtNum(p.onHand || 0, 1)} ${esc(p.unit)} on hand</span>
               </span>
               <span class="choice-check">${icon('check')}</span>
             </button>`).join('')}
           ${allowNone ? `<button type="button" class="choice ${!d.productId ? 'on' : ''}" data-act="product" data-id="">
-              <span class="choice-main"><span class="choice-title">No product</span><span class="choice-sub">Hand-pulled, or a product not in your library</span></span>
+              <span class="choice-main"><span class="choice-title">No product</span><span class="choice-sub">Something not in your library</span></span>
               <span class="choice-check">${icon('check')}</span></button>` : ''}
         </div>
-        ${!list.length ? `<div class="hint">No weed control products yet. <button type="button" class="link-btn" data-act="add-product">Add one in Yard</button></div>` : ''}
+        ${allowNone && !list.length ? '<div class="hint">Add Weed B Gon (or your spray) in Yard → Products to track the mix and inventory.</div>' : ''}
       </div>`;
   };
 
-  const calcHtml = () => {
-    const p = product();
-    if (!p) return '';
-    const sqft = area();
-    const amt = num(d.amount);
-    const onHand = p.onHand || 0;
-    const prevBack = prev && prev.productId === p.id ? prev.effects?.deducted || 0 : 0;
-    const avail = onHand + prevBack;
-    const after = Math.max(0, avail - amt);
-    const nPer = p.unit === 'lb' && sqft > 0 ? ((amt * (p.n || 0)) / 100 / sqft) * 1000 : 0;
+  const rainCheckHtml = (p) => {
+    if (d.date !== today) return '';
+    const w = E.applicationWindow({ weather: S.weather, product: p, zoneIds: d.zones.length ? d.zones : lawnIds, zones: S.zones, today, now: Date.now(), kind: type === 'weed' ? 'weed' : p.type });
+    const t0 = w.days.find((x) => x.date === today);
+    const label = type === 'weed' ? 'Spray check' : 'Rain check';
+    if (t0) return `<div class="banner banner-${t0.rating === 'avoid' ? 'warn' : t0.rating === 'ok' ? 'info' : 'ok'}">${icon(type === 'weed' ? 'wind' : 'drop')}<div><strong>${label}:</strong> ${esc(t0.note)}.${t0.rating !== 'good' && w.best && w.best.date !== today ? ` Better: ${esc(relDay(w.best.date, today))}.` : ''}</div></div>`;
+    if (!w.available) return `<div class="banner banner-info">${icon('drop')}<div>${esc(w.summary)}</div></div>`;
+    return '';
+  };
+
+  const timersHint = (p) => {
     const timers = E.computeTimers({ ...d, at: Date.now() }, p, S.zones);
-    const sloped = S.zones.filter((z) => d.zones.includes(z.id)).some(E.isSloped);
-    const tText = timers.map((t) => {
+    const parts = timers.map((t) => {
       const h = Math.round((t.until - Date.now()) / 3600e3);
       if (t.kind === 'keepOff') return `keep off ${h} h`;
       if (t.kind === 'noRain') return `no heavy rain/watering ${h} h${t.sloped ? ' (sloped)' : ''}`;
       return `no mowing ${Math.round(h / 24)} ${Math.round(h / 24) === 1 ? 'day' : 'days'}`;
     });
-    let rain = '';
-    if (d.date === today && (type === 'fert' || p.type !== 'other')) {
-      const w = E.applicationWindow({ weather: S.weather, product: p, zoneIds: d.zones, zones: S.zones, today, now: Date.now(), kind: type === 'fert' ? 'fertilizer' : p.type });
-      const t0 = w.days.find((x) => x.date === today);
-      if (t0) rain = `<div class="banner banner-${t0.rating === 'avoid' ? 'warn' : t0.rating === 'ok' ? 'info' : 'ok'}">${icon('drop')}<div><strong>Rain check:</strong> ${esc(t0.note)}.${t0.rating !== 'good' && w.best && w.best.date !== today ? ` Better: ${esc(relDay(w.best.date, today))}.` : ''}</div></div>`;
-      else if (!w.available) rain = `<div class="banner banner-info">${icon('drop')}<div>${esc(w.summary)}</div></div>`;
-    }
+    return parts.length ? `<p class="hint">${icon('clock', 'hint-ic')} Starts timers: ${esc(parts.join(' · '))}.</p>` : '';
+  };
+
+  const invLine = (p, amt) => {
+    const onHand = p.onHand || 0;
+    const back = prev && prev.productId === p.id ? prev.effects?.deducted || 0 : 0;
+    const avail = onHand + back;
+    return `${fmtNum(avail, 1)} → ${fmtNum(Math.max(0, avail - amt), 1)} ${esc(p.unit)}${avail < amt - 0.01 ? ' <em class="warn-text">(more than on hand)</em>' : ''}`;
+  };
+
+  const fertCalcHtml = () => {
+    const p = product();
+    if (!p) return '';
+    const sqft = area();
+    const amt = num(d.amount);
+    const nPer = p.unit === 'lb' && sqft > 0 ? ((amt * (p.n || 0)) / 100 / sqft) * 1000 : 0;
     return `
       <div class="calc">
         <div class="calc-row"><span>${esc(S.settings.spreader.model || 'Spreader')} setting</span><strong class="calc-big">${esc(p.elite || '–')}</strong></div>
         <div class="calc-row"><span>Amount for ${fmtNum(sqft, 0)} sq ft</span>
           <span class="calc-input"><input data-field="amount" type="text" inputmode="decimal" value="${fmtNum(amt, 2)}" aria-label="Amount used"> ${esc(p.unit)}</span></div>
         ${p.unit === 'lb' && p.n ? `<div class="calc-row"><span>Nitrogen</span><strong data-out="nper">${fmtNum(nPer, 2)} lb N / 1,000 sq ft</strong></div>` : ''}
-        <div class="calc-row"><span>Inventory</span><span data-out="inv">${fmtNum(avail, 1)} → ${fmtNum(after, 1)} ${esc(p.unit)}${avail < amt - 0.01 ? ' <em class="warn-text">(more than on hand)</em>' : ''}</span></div>
+        <div class="calc-row"><span>Inventory</span><span data-out="inv">${invLine(p, amt)}</span></div>
       </div>
-      ${rain}
-      ${tText.length ? `<p class="hint">${icon('clock', 'hint-ic')} Starts timers: ${esc(tText.join(' · '))}.${sloped && type === 'fert' ? ' Sloped zones get a stricter no-rain window.' : ''}</p>` : ''}`;
+      ${rainCheckHtml(p)}
+      ${timersHint(p)}`;
   };
 
-  const weedHtml = () => `
-    ${productListHtml(true)}
-    <div class="field field-row"><span class="field-label">Method</span>
-      ${segmented('method', [['spot', 'Spot spray'], ['broadcast', 'Broadcast']], d.method || 'spot')}</div>
-    ${calcHtml()}`;
+  const sprayHtml = () => {
+    const p = product();
+    return `
+      ${productListHtml(true)}
+      <div class="field field-row">
+        <span class="field-label">Mix sprayed</span>
+        ${stepper('gallons', d.gallons ?? 1, 'gal', 0.25, 'Gallons sprayed')}
+      </div>
+      ${p ? `<div class="calc">
+        <div class="calc-row"><span>Label mix rate</span><strong>${fmtNum(p.mixRate || 0, 2)} fl oz / gal</strong></div>
+        <div class="calc-row"><span>Concentrate used</span><strong data-out="amt">${fmtNum(num(d.amount), 2)} ${esc(p.unit)}</strong></div>
+        <div class="calc-row"><span>Inventory</span><span data-out="inv">${invLine(p, num(d.amount))}</span></div>
+      </div>
+      ${rainCheckHtml(p)}
+      ${timersHint(p)}` : ''}
+      ${zonesHtml(true, 'Where')}
+      <p class="hint">Spot spray only: highs 50–85°F, wind under 10 mph, no rain for 24 hours.</p>`;
+  };
+
+  const waterHtml = () => {
+    const calc = E.wateringCalc(S.zones, d.zones, num(d.minutes), S.settings);
+    const sloped = S.zones.filter((z) => d.zones.includes(z.id) && E.isSloped(z));
+    return `
+      ${zonesHtml(false)}
+      <div class="field field-row">
+        <span class="field-label">Run time per zone</span>
+        ${stepper('minutes', d.minutes ?? 20, 'min', 5, 'Minutes per zone')}
+      </div>
+      <div class="calc" data-out="water">
+        <div class="calc-row"><span>Water on the lawn</span><strong>${fmtNum(calc.inches, 2)}″</strong></div>
+        <div class="calc-row"><span>Gallons</span><strong>${fmtNum(calc.gallons, 0)} gal</strong></div>
+        <div class="calc-row"><span>Cost at ${fmtMoney(calc.rate.per1000)}/1,000</span><strong>${fmtMoney(calc.cost)}</strong></div>
+      </div>
+      ${sloped.length ? `<p class="hint">${icon('slope', 'hint-ic')} Sloped ${esc(sloped.map((z) => z.name).join(' & '))}: run in short cycles with a soak between.</p>` : ''}
+      <p class="hint">Rachio isn’t connected yet, so log manual runs here. Gallons use each zone’s flow rate.</p>`;
+  };
+
+  const pullHtml = () => `
+    <div class="field">
+      <div class="field-label">How many? <span class="muted">(optional)</span></div>
+      ${segmented('howMuch', PULL_AMOUNTS, d.howMuch || '')}
+    </div>
+    ${zonesHtml(true, 'Where')}`;
 
   const otherHtml = () => `
     <div class="field">
@@ -277,8 +353,10 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     ${dateHtml()}
     ${dupHtml()}
     ${type === 'mow' ? zonesHtml() + mowHtml() : ''}
-    ${type === 'fert' ? zonesHtml() + productListHtml(false) + calcHtml() : ''}
-    ${type === 'weed' ? zonesHtml() + weedHtml() : ''}
+    ${type === 'fert' ? zonesHtml() + productListHtml(false) + fertCalcHtml() : ''}
+    ${type === 'weed' ? sprayHtml() : ''}
+    ${type === 'pull' ? pullHtml() : ''}
+    ${type === 'water' ? waterHtml() : ''}
     ${type === 'other' ? otherHtml() + zonesHtml(true) : ''}
     ${detailsHtml()}
     ${existing ? `<button type="button" class="btn btn-delete" data-act="delete">${icon('trash')} Delete entry</button>` : ''}`;
@@ -308,17 +386,29 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     }
   }
   function refreshCalc() {
+    const p = product();
     const box = sheet.body.querySelector('.calc');
     if (!box) return;
-    const p = product();
     const amt = num(d.amount);
-    const sqft = area();
-    const nEl = box.querySelector('[data-out="nper"]');
-    if (nEl && p) nEl.textContent = `${fmtNum(sqft > 0 ? ((amt * (p.n || 0)) / 100 / sqft) * 1000 : 0, 2)} lb N / 1,000 sq ft`;
-    const invEl = box.querySelector('[data-out="inv"]');
-    if (invEl && p) {
-      const avail = (p.onHand || 0) + (prev && prev.productId === p.id ? prev.effects?.deducted || 0 : 0);
-      invEl.innerHTML = `${fmtNum(avail, 1)} → ${fmtNum(Math.max(0, avail - amt), 1)} ${esc(p.unit)}${avail < amt - 0.01 ? ' <em class="warn-text">(more than on hand)</em>' : ''}`;
+    if (type === 'fert' && p) {
+      const sqft = area();
+      const nEl = box.querySelector('[data-out="nper"]');
+      if (nEl) nEl.textContent = `${fmtNum(sqft > 0 ? ((amt * (p.n || 0)) / 100 / sqft) * 1000 : 0, 2)} lb N / 1,000 sq ft`;
+    }
+    if (type === 'weed' && p) {
+      const a = box.querySelector('[data-out="amt"]');
+      if (a) a.textContent = `${fmtNum(amt, 2)} ${p.unit}`;
+    }
+    const inv = box.querySelector('[data-out="inv"]');
+    if (inv && p) inv.innerHTML = invLine(p, amt);
+    if (type === 'water') {
+      const calc = E.wateringCalc(S.zones, d.zones, num(d.minutes), S.settings);
+      const vals = box.querySelectorAll('strong');
+      if (vals.length === 3) {
+        vals[0].textContent = `${fmtNum(calc.inches, 2)}″`;
+        vals[1].textContent = `${fmtNum(calc.gallons, 0)} gal`;
+        vals[2].textContent = fmtMoney(calc.cost);
+      }
     }
   }
 
@@ -332,7 +422,7 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     const seg = e.target.closest('[data-seg] .seg-opt');
     if (seg) {
       const name = seg.closest('[data-seg]').dataset.seg;
-      d[name] = seg.dataset.value;
+      d[name] = name === 'howMuch' && d[name] === seg.dataset.value ? '' : seg.dataset.value;
       render();
       return;
     }
@@ -349,14 +439,15 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
       d.zones = all ? [] : zoneList.map((z) => z.id);
       recompute();
     } else if (act === 'pos') d.position = Number(a.dataset.pos);
-    else if (act === 'hours') {
-      d.hours = Math.max(0, round(num(d.hours) + Number(a.dataset.step), 2));
-      st.hoursManual = true;
+    else if (act === 'pattern') d.pattern = Number(a.dataset.pattern);
+    else if (act === 'step') {
+      const f = a.dataset.field;
+      d[f] = Math.max(0, round(num(d[f]) + Number(a.dataset.step), 2));
+      if (f === 'hours') st.hoursManual = true;
+      recompute();
     } else if (act === 'product') {
       d.productId = a.dataset.id || null;
       st.amountManual = false;
-      const p = product();
-      if (type === 'weed' && p) d.method = p.type === 'weed' ? 'spot' : 'broadcast';
       recompute();
     } else if (act === 'kind') d.kind = a.dataset.kind;
     else if (act === 'details') st.details = !st.details;
@@ -380,7 +471,7 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     const f = e.target.dataset.field;
     if (f === 'notes') d.notes = e.target.value;
     else if (f === 'title') d.title = e.target.value;
-    else if (f === 'amount') { d.amount = e.target.value; st.amountManual = true; refreshCalc(); refreshHold(); } else if (f === 'hours') { d.hours = e.target.value; st.hoursManual = true; refreshHold(); }
+    else if (f === 'amount') { d.amount = e.target.value; st.amountManual = true; refreshCalc(); refreshHold(); } else if (f === 'hours') { d.hours = e.target.value; st.hoursManual = true; refreshHold(); } else if (f === 'gallons' || f === 'minutes') { d[f] = e.target.value; recompute(); refreshCalc(); refreshHold(); }
   });
 
   sheet.body.addEventListener('change', async (e) => {
@@ -401,7 +492,6 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
   });
 
   refreshHold();
-
   bindHold(holdBtn, commit, { isGuarded: sheet.guarded, hintEl: hint });
 
   function build() {
@@ -414,14 +504,21 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
       log.height = existing && existing.position === log.position && existing.height != null ? existing.height : heights[log.position - 1];
       log.hours = round(Math.max(0, num(d.hours)), 2);
       log.final = !!d.final;
+      log.pattern = Number.isInteger(d.pattern) ? d.pattern : 0;
     }
     if (type === 'fert' || type === 'weed') {
       const p = product();
       if (p) {
         Object.assign(log, { productId: p.id, productName: p.name, productType: p.type, unit: p.unit, n: p.n, elite: p.elite, amount: round(Math.max(0, num(d.amount)), 2) });
+        if (type === 'weed') Object.assign(log, { gallons: round(Math.max(0, num(d.gallons)), 2), mixRate: p.mixRate || 0, method: 'spot' });
       } else {
         Object.assign(log, { productId: null, productName: '', productType: null, amount: 0 });
+        if (type === 'weed') Object.assign(log, { gallons: round(Math.max(0, num(d.gallons)), 2), method: 'spot' });
       }
+    }
+    if (type === 'water') {
+      const calc = E.wateringCalc(S.zones, d.zones, num(d.minutes));
+      Object.assign(log, { minutes: round(Math.max(0, num(d.minutes)), 1), inches: round(calc.inches, 3), gallons: round(calc.gallons, 1), source: 'manual' });
     }
     if (type === 'other') log.title = (d.title || '').trim() || E.otherLabel(d.kind);
     return log;
@@ -460,19 +557,19 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
   return sheet;
 }
 
-/** Downscale a picked photo to a JPEG data URL (max 1280 px) so the database stays small. */
-function readPhoto(file) {
+/** Downscale a picked photo to a JPEG data URL so the database stays small. */
+export function readPhoto(file, max = 1280, quality = 0.8) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       try {
-        const scale = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
+        const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
         canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        resolve(canvas.toDataURL('image/jpeg', quality));
       } catch (err) {
         reject(err);
       } finally {
@@ -483,3 +580,4 @@ function readPhoto(file) {
     img.src = url;
   });
 }
+

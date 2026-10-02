@@ -144,14 +144,56 @@ export function toast(message, { undo, duration = 5000, onExpire, kind = '' } = 
   return t;
 }
 
-export function holdButtonHtml(label = 'Hold to save') {
+export function holdButtonHtml(label = 'Hold to save', { danger = false, hint = 'Press and hold for 1 second' } = {}) {
   return `
-    <button type="button" class="hold-btn" data-hold aria-label="${esc(label)} (press and hold for 1 second)">
+    <button type="button" class="hold-btn${danger ? ' danger' : ''}" data-hold aria-label="${esc(label)} (press and hold for 1 second)">
       <span class="hold-label">${esc(label)}</span>
       <span class="hold-fill" aria-hidden="true"><span class="hold-label">${esc(label)}</span></span>
       <span class="hold-check" aria-hidden="true">${icon('check')}</span>
     </button>
-    <p class="hold-hint" aria-live="polite">Press and hold for 1 second</p>`;
+    <p class="hold-hint" aria-live="polite">${esc(hint)}</p>`;
+}
+
+/**
+ * Long-press (about half a second) on `el` calls `onLong`. A short tap does nothing.
+ * Used for the mowing-pattern icon's text description.
+ */
+export function onLongPress(el, onLong, ms = 450) {
+  let timer = 0;
+  let sx = 0;
+  let sy = 0;
+  const clear = () => { clearTimeout(timer); timer = 0; };
+  el.addEventListener('pointerdown', (e) => {
+    sx = e.clientX;
+    sy = e.clientY;
+    clear();
+    timer = setTimeout(() => { timer = 0; onLong(e); }, ms);
+  });
+  el.addEventListener('pointermove', (e) => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) clear(); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => el.addEventListener(t, clear));
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+  el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLong(e); } });
+}
+
+/** Small speech-bubble popover anchored under an element; dismisses itself. */
+export function popover(anchor, text, ms = 3200) {
+  document.querySelectorAll('.popover').forEach((p) => p.remove());
+  const r = anchor.getBoundingClientRect();
+  const el = document.createElement('div');
+  el.className = 'popover';
+  el.setAttribute('role', 'status');
+  el.textContent = text;
+  document.body.appendChild(el);
+  const w = Math.min(280, window.innerWidth - 32);
+  el.style.width = `${w}px`;
+  const left = Math.max(16, Math.min(window.innerWidth - w - 16, r.right - w));
+  el.style.left = `${left}px`;
+  el.style.top = `${r.bottom + 8 + window.scrollY}px`;
+  requestAnimationFrame(() => el.classList.add('show'));
+  const close = () => { el.classList.remove('show'); setTimeout(() => el.remove(), 200); document.removeEventListener('pointerdown', close, true); };
+  setTimeout(close, ms);
+  setTimeout(() => document.addEventListener('pointerdown', close, true), 50);
+  return el;
 }
 
 /**
@@ -252,10 +294,10 @@ export function segmented(name, options, value, extra = '') {
   }).join('')}</div>`;
 }
 
-/** Estimated / Measured label that toggles on tap. */
+/** "Estimated" badge for a numeric value. Trusted values show no badge. Tap to mark trusted. */
 export function provPill(key, value) {
-  const m = value === 'meas';
-  return `<button type="button" class="prov ${m ? 'meas' : 'est'}" data-prov="${esc(key)}" aria-label="${m ? 'Measured' : 'Estimated'} (tap to change)">${m ? 'Measured' : 'Estimated'}</button>`;
+  if (value === 'meas') return '';
+  return `<button type="button" class="prov est" data-prov="${esc(key)}" aria-label="Estimated — tap once you’ve checked this value">Estimated</button>`;
 }
 
 export function switchHtml(name, on, label) {

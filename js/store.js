@@ -2,7 +2,7 @@
 // Log saves apply side effects (inventory, timers, nitrogen) atomically and reverse them on edit/delete.
 
 import * as db from './db.js';
-import { defaultSettings, defaultZones, defaultProducts, SCHEMA } from './defaults.js';
+import { defaultSettings, defaultZones, defaultProducts, defaultPlanProducts, SCHEMA } from './defaults.js';
 import { computeTimers } from './engine.js';
 import { clone, uid, round, setPath } from './util.js';
 
@@ -11,13 +11,17 @@ export const S = {
   zones: [],
   products: [],
   logs: [],
+  headerPhoto: null, // { dataUrl, tone }
   weather: null,
   weatherState: 'idle', // idle | loading | ok | error
   weatherError: null,
 };
 
 const listeners = new Set();
-export const subscribe = (fn) => listeners.add(fn);
+export const subscribe = (fn) => {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+};
 const emit = (what) => listeners.forEach((fn) => fn(what));
 const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(String(b.name));
 
@@ -45,15 +49,98 @@ async function seed() {
   });
 }
 
+/* ---------- migrations ---------- */
+
+const RENAMED_TASKS = {
+  'pre-emergent': 'feed-spring',
+  'fert-late-spring': 'feed-late-spring',
+  'fert-summer': 'feed-summer',
+  'fert-early-fall': 'feed-early-fall',
+  'fert-late-fall': 'feed-late-fall',
+  'weed-spring': 'spray-spring',
+  'weed-fall': 'spray-fall',
+};
+
+/** Bring stored settings up to the current schema without losing anything the user entered. */
+export function migrateSettings(stored) {
+  const out = withDefaults(defaultSettings(), stored || {});
+  const from = stored?.schema || 1;
+  if (from < 2) {
+    // Blade-sharpening tracking was removed.
+    delete out.mower.sharpenEvery;
+    delete out.mower.sinceSharpenAtStart;
+    delete out.mower.hoursBefore;
+    // Labels now apply to numeric values only, and the mower heights go back to Estimated.
+    const numeric = new Set(Object.keys(defaultSettings().src));
+    const src = {};
+    for (const [k, v] of Object.entries(out.src || {})) if (numeric.has(k) || /^water\.tiers\.\d+$/.test(k)) src[k] = v;
+    (out.mower.heights || []).forEach((_, i) => { src[`mower.heights.${i}`] = 'est'; });
+    out.src = src;
+    // The plan now recommends the Scotts lineup; carry over checks to renamed tasks.
+    out.planProducts = defaultPlanProducts();
+    for (const checks of Object.values(out.planChecks || {})) {
+      for (const [a, b] of Object.entries(RENAMED_TASKS)) if (checks[a]) { checks[b] = true; delete checks[a]; }
+      delete checks['sharpen-spring'];
+    }
+  }
+  out.schema = SCHEMA;
+  return out;
+}
+
+/** Fill in fields newer versions need; on the v1→v2 upgrade also add the Scotts lineup and Weed B Gon. */
+export function migrateProducts(products, fromSchema) {
+  const defs = defaultProducts();
+  const have = new Set(products.map((p) => p.id));
+  const changed = [];
+  if (fromSchema < 2) for (const d of defs) if (!have.has(d.id)) changed.push(d);
+  for (const p of products) {
+    const def = defs.find((d) => d.id === p.id);
+    const q = { ...p };
+    let dirty = false;
+    if (!Array.isArray(q.bagOptions) || !q.bagOptions.length) {
+      q.bagOptions = def && def.size === p.size
+        ? def.bagOptions.map((o) => (o.size === p.size ? { size: o.size, price: p.price } : o))
+        : [{ size: p.size, price: p.price }];
+      dirty = true;
+    }
+    if (q.short == null) { q.short = def?.short || ''; dirty = true; }
+    if (q.mixRate == null) { q.mixRate = def?.mixRate || 0; dirty = true; }
+    if (fromSchema < 2 && p.id === 'p-lesco-24-0-11' && p.order === 1) { q.order = 6; dirty = true; }
+    if (dirty) changed.push(q);
+  }
+  return changed;
+}
+
 export async function load() {
   await db.openDB();
   if (!(await db.get('kv', 'settings'))) await seed();
-  S.settings = withDefaults(defaultSettings(), await db.get('kv', 'settings'));
+  const stored = await db.get('kv', 'settings');
+  const from = stored?.schema || 1;
+  S.settings = migrateSettings(stored);
   S.settings.src = S.settings.src || {};
+  const products = await db.getAll('products');
+  const fixes = migrateProducts(products, from);
+  if (from < SCHEMA || fixes.length) {
+    await db.tx(['kv', 'products'], (st) => {
+      st('kv').put(S.settings, 'settings');
+      fixes.forEach((p) => st('products').put(p));
+    });
+  }
+  const fixed = new Map(fixes.map((p) => [p.id, p]));
+  S.products = [...products.map((p) => fixed.get(p.id) || p), ...fixes.filter((p) => !products.some((x) => x.id === p.id))].sort(byOrder);
   S.zones = (await db.getAll('zones')).sort(byOrder);
-  S.products = (await db.getAll('products')).sort(byOrder);
   S.logs = await db.getAll('logs');
+  S.headerPhoto = (await db.get('kv', 'headerPhoto')) || null;
   emit('load');
+}
+
+/* ---------- header photo ---------- */
+
+export async function setHeaderPhoto(photo) {
+  if (photo) await db.put('kv', photo, 'headerPhoto');
+  else await db.del('kv', 'headerPhoto');
+  S.headerPhoto = photo || null;
+  emit('settings');
 }
 
 /* ---------- settings ---------- */
@@ -213,6 +300,7 @@ export async function exportData({ includePhotos = true } = {}) {
     products: S.products,
     logs: S.logs,
     photos: includePhotos ? await db.getAll('photos') : [],
+    headerPhoto: includePhotos ? S.headerPhoto : null,
   };
 }
 
@@ -223,6 +311,7 @@ export function validateBackup(obj) {
   const hasIds = (arr) => arr.every((x) => x && typeof x.id === 'string' && x.id);
   if (!hasIds(obj.zones) || !hasIds(obj.products) || !hasIds(obj.logs)) throw new Error('The backup is missing record IDs.');
   if (obj.schema > SCHEMA) throw new Error('This backup is from a newer version of the app.');
+  if (obj.settings.schema > SCHEMA) throw new Error('This backup is from a newer version of the app.');
 }
 
 /** Replace everything on the device with the backup's contents. */
@@ -236,6 +325,8 @@ export async function importData(obj) {
     obj.products.forEach((p) => st('products').put(p));
     obj.logs.forEach((l) => st('logs').put(l));
     photos.forEach((p) => st('photos').put(p));
+    if (obj.headerPhoto?.dataUrl) st('kv').put(obj.headerPhoto, 'headerPhoto');
+    else st('kv').delete('headerPhoto');
   });
   await load();
 }

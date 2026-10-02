@@ -4,12 +4,27 @@ A mobile-first Progressive Web App for a Kentucky bluegrass lawn in Prior Lake, 
 
 ## Tabs
 
-- **Today**: safety timers, next mow (day, mower position, height, reason), alerts (crabgrass soil temperature, rain-aware fertilizer timing, low inventory, blade sharpening, hard freeze), Open-Meteo weather with 24-hour soil temperature, rain and evapotranspiration, and this week's watering need and cost.
-- **Plan**: a Minnesota bluegrass season calendar triggered by soil temperature and the forecast. Each task shows its product, Scotts Elite setting, pounds for your zones and why. Includes the fall checklist.
-- **History**: every log entry, newest first, with edit and delete, plus season totals (mows, lb N per 1,000 sq ft, products used).
-- **Yard**: every setting, editable and labeled Estimated or Measured, covering location, zones, mower, spreader, clippings, products, water rates and schedule. Also holds Settings (appearance, JSON export/import, reset).
+- **Today**: a photo header (pick your own from the camera roll) with your target height, soil temperature, 7-day rain and the next feeding window. Below it are:
+  - the Next Mow card (day, mower position, height, reason, and a rotating stripe-pattern icon);
+  - Today, Tomorrow and Up Next task lists;
+  - Watering and Conditions cards;
+  - the 16-day forecast. Tap any day for hourly detail and lawn verdicts (mow, spot spray, pull weeds, feed).
+- **Calendar**: the Scotts feeding plan (Halts → Turf Builder Lawn Food → optional summer → WinterGuard), spaced at least 4 weeks apart. Missed windows roll into the next one. It also has the season's tasks, the fall checklist (ticks itself off from your logs), a shopping list in whole bags, and a "Show past" toggle.
+- **History**: every log entry, newest first, with filters, edit and delete, plus season totals (mows, lb N per 1,000 sq ft, products, watering cost).
+- **Yard**: rows for location, zones, mower, spreader, products, water rates, schedule and nitrogen. Each row opens a detail screen. Numbers you haven't confirmed show an **Estimated** badge; tap it once you've checked the value. The gear holds your name, header photo, appearance, Winter Mode, backup and reset (press and hold).
 
-**+ Log** in the middle of the tab bar logs a mow, fertilizer, weed control, or anything else. You save by pressing and holding for 1 second, and Undo stays available for 5 seconds after saving.
+**+** in the middle of the tab bar logs a mow, fertilizer, spot spray, pulled weeds, watering, or anything else, on any past date. You save by pressing and holding for 1 second, and Undo stays available for 5 seconds after saving.
+
+## Winter Mode
+
+Turn it on from the Winter pill on Today or in Settings. The app suggests it after the final mow and blowout are logged, or after a hard freeze, but never turns it on by itself. The winter screen shows:
+
+- snowfall and snow depth;
+- a soil temperature trend;
+- a countdown to the spring crabgrass-preventer window;
+- winter tips and a checklist;
+- last season's recap;
+- the spring shopping list.
 
 ## Install on iPhone
 
@@ -19,7 +34,7 @@ A mobile-first Progressive Web App for a Kentucky bluegrass lawn in Prior Lake, 
 
 ## Backups
 
-Data lives only on the phone. Use **Yard → Settings → Export JSON backup** now and then; on iPhone it opens the share sheet so you can save to Files or iCloud Drive. **Import** replaces everything on the device with a backup.
+Data lives only on the phone. Use **Yard → gear → Export JSON backup** now and then; on iPhone it opens the share sheet so you can save to Files or iCloud Drive. **Import** replaces everything on the device with a backup.
 
 ## Development
 

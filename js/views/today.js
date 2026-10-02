@@ -1,30 +1,71 @@
-// Today tab: safety timers, next mow, alerts, weather, and this week's watering.
+// Today tab: photo header, next mow, today/tomorrow/up-next tasks, watering + conditions, forecast, shopping.
+// In Winter Mode the winter screen replaces it.
 
 import { S } from '../store.js';
 import * as E from '../engine.js';
-import { icon } from '../icons.js';
+import * as Season from '../season.js';
+import { icon, patternIcon } from '../icons.js';
 import { describeCode } from '../weather.js';
+import { MOW_PATTERNS } from '../defaults.js';
+import { onLongPress, popover } from '../ui.js';
+import { renderWinter } from './winter.js';
 import { esc, fmtDay, fmtNum, fmtMoney, fmtTime, fmtMonthDay, daysBetween, WEEKDAYS, nobreak } from '../util.js';
 
 const f0 = (n) => fmtNum(n, 0);
+export const BADGES = { today: 'Do today', week: 'This week', optional: 'Optional', scheduled: 'Scheduled' };
+
+function greeting(now) {
+  const h = new Date(now).getHours();
+  const part = h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  const name = (S.settings.profile?.name || '').trim();
+  return name ? `${part}, ${name}` : part;
+}
+
+/** Photo header shared by Today and the winter screen. */
+export function heroHtml(c, { summary, feedLine, feedOpen = false, winter = false }) {
+  const photo = S.headerPhoto?.dataUrl || 'img/header.jpg';
+  const tone = S.headerPhoto?.tone || 'light';
+  return `<header class="hero tone-${tone}${winter ? ' is-winter' : ''}">
+    <div class="hero-img" style="background-image:url('${photo.replace(/'/g, '%27')}')" role="img" aria-label="Header photo"></div>
+    <div class="hero-scrim"></div>
+    <div class="hero-content">
+      <div class="hero-top">
+        <button type="button" class="hero-loc" data-action="yard-section" data-id="location">${icon('pin')}<span>${esc(S.settings.location.name)}</span>${icon('chev', 'chev')}</button>
+        <div class="hero-actions">
+          <button type="button" class="hero-pill ${winter ? 'on' : ''}" data-action="toggle-winter" aria-pressed="${winter}" data-testid="winter-toggle">${icon('snow')}<span>Winter</span></button>
+          <button type="button" class="hero-round" data-action="settings" aria-label="Settings">${icon('gear')}</button>
+        </div>
+      </div>
+      <h1 class="hero-title" data-testid="greeting">${esc(greeting(c.now))}</h1>
+      <p class="hero-sum" data-testid="summary">${esc(summary)}</p>
+      ${feedLine ? `<div class="hero-feed ${feedOpen ? 'open' : ''}" data-testid="feed-line">${icon(winter ? 'thermo' : 'bag')}<span>${esc(nobreak(feedLine))}</span></div>` : ''}
+    </div>
+  </header>`;
+}
 
 function timersHtml(c) {
   const list = E.activeTimers(S.logs, c.now);
   if (!list.length) return '';
   const ic = { keepOff: 'shield', noMow: 'mow', noRain: 'drop' };
   return `<section class="timers" aria-label="Safety timers">${list.map((t) => `
-    <div class="timer timer-${t.kind}">${icon(ic[t.kind])}<div><div class="timer-text">${esc(t.text)}</div>${t.product ? `<div class="timer-sub">${esc(t.product)}</div>` : ''}</div></div>`).join('')}</section>`;
+    <div class="timer timer-${t.kind}">${icon(ic[t.kind])}<div><div class="timer-text">${esc(t.text)}</div>${t.product ? `<div class="timer-sub">${esc(nobreak(t.product))}</div>` : ''}</div></div>`).join('')}</section>`;
 }
 
-function mowDateLine(date, today) {
-  const n = daysBetween(today, date);
-  return `${fmtMonthDay(date)}${n >= 2 ? ` · in ${n} days` : ''}`;
+export function promptHtml(c) {
+  const p = Season.winterPrompt(c);
+  if (!p) return '';
+  return `<section class="card prompt-card" data-testid="winter-prompt">
+    <div class="prompt-main">${icon(p.action === 'on' ? 'snow' : 'leaf')}<div><strong>${esc(p.title)}</strong><p>${esc(p.text)}</p></div></div>
+    <div class="prompt-actions">
+      <button type="button" class="btn btn-small btn-plain" data-action="dismiss-prompt" data-key="${esc(p.key)}">Not now</button>
+      <button type="button" class="btn btn-small btn-filled" data-action="${p.action === 'on' ? 'winter-on' : 'winter-off'}">${p.action === 'on' ? 'Turn on' : 'Turn off'}</button>
+    </div>
+  </section>`;
 }
 
-function mowHtml(c) {
-  const r = E.mowRecommendation(c);
+function mowHtml(c, r) {
   if (r.status === 'off') {
-    return `<section class="card mow-card">
+    return `<section class="card mow-hero" data-testid="mow-card">
       <div class="kicker">${icon('mow')} Mowing</div>
       <div class="mow-day">${esc(r.title)}</div>
       <p class="reason">${esc(r.reason)}</p>
@@ -32,134 +73,144 @@ function mowHtml(c) {
   }
   const heights = S.settings.mower.heights;
   const skip = r.status === 'skip';
-  return `<section class="card mow-card" data-testid="mow-card">
-    <div class="kicker">${icon('mow')} ${skip ? 'Mowing' : 'Next mow'} · ${esc(r.season.label)}</div>
-    <div class="mow-day">${skip ? 'Skip this week' : esc(r.dayLabel)}</div>
-    <div class="mow-date">${skip ? `Next check ${esc(fmtDay(r.date))}` : esc(mowDateLine(r.date, c.today))}</div>
-    <div class="stats">
-      <div class="stat"><div class="stat-v" data-testid="mow-pos">${r.position}</div><div class="stat-l">Position</div></div>
-      <div class="stat"><div class="stat-v" data-testid="mow-height">${heights[r.position - 1]}″</div><div class="stat-l">Height</div></div>
-      <div class="stat"><div class="stat-v">${r.lastDate ? `${fmtNum(r.growth, 1)}″` : '—'}</div><div class="stat-l">Growth</div></div>
+  const n = daysBetween(c.today, r.date);
+  const pat = MOW_PATTERNS[r.pattern] || MOW_PATTERNS[0];
+  return `<section class="card mow-hero" data-testid="mow-card">
+    <div class="mow-top">
+      <div class="mow-when">
+        <div class="kicker">${icon('mow')} ${skip ? 'Mowing' : 'Next mow'} · ${esc(r.season.label)}</div>
+        <div class="mow-day">${skip ? 'Skip this week' : esc(r.dayLabel)}</div>
+        <div class="mow-date">${skip ? `Next check ${esc(fmtDay(r.date))}` : `${fmtMonthDay(r.date)}${n >= 2 ? ` · in ${n} days` : ''}`}</div>
+      </div>
+      <button type="button" class="pattern-btn" data-testid="pattern" data-pattern="${pat.id}" aria-label="Mowing pattern: ${esc(pat.label)}. Press and hold for details.">${patternIcon(pat.angle, 48)}</button>
+    </div>
+    <div class="mow-stats">
+      <span class="mstat"><span class="mstat-v" data-testid="mow-pos">${r.position}</span><span class="mstat-l">Position</span></span>
+      <span class="mstat"><span class="mstat-v" data-testid="mow-height">${heights[r.position - 1]}″</span><span class="mstat-l">Height</span></span>
+      <span class="mstat"><span class="mstat-v">${r.lastDate ? `${fmtNum(r.growth, 1)}″` : '—'}</span><span class="mstat-l">Growth</span></span>
     </div>
     <p class="reason" data-testid="mow-reason">${esc(r.reason)}</p>
     ${r.extra ? `<div class="banner banner-info">${icon('leaf')}<div><strong>Optional extra mow:</strong> ${esc(r.extra.reason)} Position ${r.extra.pos} (${r.extra.h}″).</div></div>` : ''}
-    ${r.notes.map((n) => `<p class="note">${icon('info', 'note-ic')}${esc(n)}</p>`).join('')}
-    ${r.calibration.count ? `<p class="hint">Growth model tuned by ${r.calibration.count} of your mow notes (${r.calibration.factor >= 1 ? '+' : ''}${f0((r.calibration.factor - 1) * 100)}%).</p>` : ''}
-    <button type="button" class="btn btn-tinted" data-action="log" data-type="mow">${icon('plus')} Log mow</button>
+    ${r.notes.map((t) => `<p class="note">${icon('info', 'note-ic')}${esc(t)}</p>`).join('')}
+    <button type="button" class="btn btn-primary" data-action="log" data-type="mow">${icon('plus')} Log mow</button>
   </section>`;
 }
 
-function alertsHtml(c) {
-  const list = E.alerts(c);
-  if (!list.length) return '';
-  return `<section class="alerts" aria-label="Alerts">${list.map((a) => {
-    const attrs = a.action ? `data-action="alert" data-alert='${esc(JSON.stringify(a.action))}'` : '';
-    const tag = a.action ? 'button type="button"' : 'div';
-    return `<${tag} class="alert alert-${a.level}" ${attrs} data-id="${a.id}">
-      <span class="alert-ic">${icon(a.icon)}</span>
-      <span class="alert-main"><span class="alert-title">${esc(nobreak(a.title))}</span><span class="alert-body">${esc(nobreak(a.body))}</span></span>
-      ${a.action ? icon('chev', 'chev') : ''}
-    </${a.action ? 'button' : 'div'}>`;
-  }).join('')}</section>`;
+export function taskRow(item) {
+  return `<button type="button" class="task-row" data-action="agenda" data-item='${esc(JSON.stringify(item.action || {}))}' data-id="${esc(item.id)}">
+    <span class="task-ic">${icon(item.icon || 'leaf')}</span>
+    <span class="task-main"><span class="task-title">${esc(item.title)}</span><span class="task-reason">${esc(nobreak(item.reason))}</span></span>
+    <span class="badge badge-${item.badge}">${BADGES[item.badge]}</span>
+    ${icon('chev', 'chev')}
+  </button>`;
 }
 
-function weatherHtml(c) {
+function sectionsHtml(a) {
+  const n = a.today.length;
+  return `
+    <section class="agenda" data-testid="today-section">
+      <div class="sec-row"><h2 class="sec-title">Today</h2><span class="sec-aside">${n ? `${n} ${n === 1 ? 'thing' : 'things'} worth doing` : 'Nothing pressing'}</span></div>
+      <div class="list-card">${n ? a.today.map(taskRow).join('') : `<div class="task-empty">${icon('check')}<span>Nothing needs doing today beyond the mow plan.</span></div>`}</div>
+    </section>
+    ${a.tomorrow.length ? `<section class="agenda" data-testid="tomorrow-section">
+      <div class="sec-row"><h2 class="sec-title">Tomorrow</h2></div>
+      <div class="list-card">${a.tomorrow.map(taskRow).join('')}</div>
+    </section>` : ''}`;
+}
+
+function waterCardHtml(c) {
+  const w = E.waterWeek(c);
+  return `<div class="card mini water-card" data-testid="water">
+    <div class="mini-kicker">${icon('drop')}<span>Watering</span></div>
+    <div class="mini-big"><span data-testid="water-total">${fmtNum(w.total, 2)}″</span></div>
+    <div class="mini-sub">past 7 days</div>
+    <div class="mini-lines">Rain ${fmtNum(w.rain, 2)}″ · Logged ${fmtNum(w.watered, 2)}″</div>
+    <div class="mini-lines">${f0(w.gallons)} gal · ${fmtMoney(w.cost)}</div>
+    <div class="mini-note">Rachio not connected yet</div>
+  </div>`;
+}
+
+function condCardHtml(c) {
   const w = S.weather;
-  const st = S.weatherState;
-  if (!w) {
-    return `<section class="card weather">
-      <div class="kicker">${icon('cloud')} Weather</div>
-      <p class="reason">${st === 'loading' ? 'Loading the forecast…' : `Weather unavailable${S.weatherError ? ` (${esc(S.weatherError)})` : ''}. Recommendations use typical Prior Lake weather until it loads.`}</p>
-      <button type="button" class="btn btn-plain" data-action="refresh-weather">${icon('refresh')} Try again</button>
-    </section>`;
-  }
-  const cond = c.cond;
-  const today = w.dayMap[c.today];
-  const cur = w.current;
+  const today = w?.dayMap?.[c.today];
+  const cur = w?.current;
   const desc = describeCode(cur?.code ?? today?.code);
-  const days = cond.next.slice(0, 7);
+  if (!w) {
+    return `<button type="button" class="card mini cond-card" data-action="refresh-weather">
+      <div class="mini-kicker">${icon('sun')}<span>Conditions</span></div>
+      <div class="mini-big">–</div>
+      <div class="mini-lines">${S.weatherState === 'loading' ? 'Loading weather…' : 'Weather unavailable — tap to retry'}</div>
+    </button>`;
+  }
+  return `<button type="button" class="card mini cond-card" data-action="day" data-date="${c.today}" data-testid="conditions">
+    <div class="mini-kicker">${icon(desc.icon)}<span>Conditions</span></div>
+    <div class="mini-big">${cur?.temp != null ? `${f0(cur.temp)}°` : today ? `${f0(today.tMax)}°` : '–'}<span class="mini-desc">${esc(desc.label)}</span></div>
+    <div class="mini-lines">${today ? `H ${f0(today.tMax)}° · L ${f0(today.tMin)}°` : ''}</div>
+    <div class="mini-split"><span>Soil <b data-testid="soil24">${c.cond.soil24 != null ? `${f0(c.cond.soil24)}°` : '–'}</b></span><span>Rain 7d <b>${fmtNum(c.cond.rainPast7, 2)}″</b></span></div>
+  </button>`;
+}
+
+export function forecastHtml(c) {
+  const w = S.weather;
+  if (!w) return '';
+  const days = c.cond.next.slice(0, 7);
   const ageMin = Math.round((Date.now() - w.fetchedAt) / 60000);
   const stale = ageMin > 90;
-  return `<section class="card weather" data-testid="weather">
-    <div class="kicker">${icon('cloud')} Weather · ${esc(S.settings.location.name)}</div>
-    <div class="wx-now">
-      <span class="wx-ic">${icon(desc.icon)}</span>
-      <span class="wx-temp">${cur?.temp != null ? `${f0(cur.temp)}°` : today ? `${f0(today.tMax)}°` : '–'}</span>
-      <span class="wx-desc"><span>${esc(desc.label)}</span>${today ? `<span class="muted">H ${f0(today.tMax)}° · L ${f0(today.tMin)}°</span>` : ''}</span>
-    </div>
-    <div class="metrics">
-      <div class="metric"><span class="metric-l">Soil (24-h avg)</span><span class="metric-v" data-testid="soil24">${cond.soil24 != null ? `${f0(cond.soil24)}°F` : '–'}</span></div>
-      <div class="metric"><span class="metric-l">Rain, past 7 days</span><span class="metric-v">${fmtNum(cond.rainPast7, 2)}″</span></div>
-      <div class="metric"><span class="metric-l">ET, past 7 days</span><span class="metric-v">${fmtNum(cond.past.reduce((t, d) => t + (d.et0 || 0), 0), 2)}″</span></div>
-      <div class="metric"><span class="metric-l">Rain, next 7 days</span><span class="metric-v">${fmtNum(cond.rainNext7, 2)}″</span></div>
-    </div>
+  return `<section class="card forecast-card" data-testid="weather">
+    <div class="sec-row inner"><span class="mini-kicker">${icon('plan')}<span>7-day forecast</span></span>
+      <button type="button" class="icon-btn small" data-action="refresh-weather" aria-label="Refresh weather">${icon('refresh')}</button></div>
     <div class="forecast" role="list">${days.map((d) => {
       const dd = describeCode(d.code);
-      return `<div class="fc-day ${d.date === c.today ? 'is-today' : ''}" role="listitem" aria-label="${esc(fmtDay(d.date))}: high ${f0(d.tMax)}, low ${f0(d.tMin)}, rain ${fmtNum(d.rain, 2)} inches">
+      return `<button type="button" class="fc-day ${d.date === c.today ? 'is-today' : ''}" role="listitem" data-action="day" data-date="${d.date}" aria-label="${esc(fmtDay(d.date))}: high ${f0(d.tMax)}, low ${f0(d.tMin)}, rain ${fmtNum(d.rain, 2)} inches. Tap for details.">
         <span class="fc-name">${d.date === c.today ? 'Today' : WEEKDAYS[new Date(`${d.date}T12:00`).getDay()]}</span>
-        <span class="fc-ic">${icon(d.est ? 'cloud' : dd.icon)}</span>
+        <span class="fc-ic">${icon(d.est ? 'cloud' : (d.snow > 0.1 ? 'snowcloud' : dd.icon))}</span>
         <span class="fc-hi">${f0(d.tMax)}°</span>
         <span class="fc-lo">${f0(d.tMin)}°</span>
         <span class="fc-rain ${d.rain >= 0.1 ? 'wet' : ''}">${d.rain >= 0.01 ? `${fmtNum(d.rain, 2)}″` : '—'}</span>
-      </div>`;
+      </button>`;
     }).join('')}</div>
-    <div class="wx-foot">
-      <span class="${stale ? 'warn-text' : 'muted'}">${st === 'loading' ? 'Updating…' : `${stale ? 'Offline · ' : ''}Updated ${ageMin < 1 ? 'just now' : fmtTime(w.fetchedAt)}${stale && ageMin > 1440 ? ` (${fmtDay(new Date(w.fetchedAt).toISOString().slice(0, 10))})` : ''}`} · Open-Meteo</span>
-      <button type="button" class="icon-btn" data-action="refresh-weather" aria-label="Refresh weather">${icon('refresh')}</button>
-    </div>
+    <div class="wx-foot"><span class="${stale ? 'warn-text' : 'muted'}">${S.weatherState === 'loading' ? 'Updating…' : `${stale ? 'Offline · ' : ''}Updated ${ageMin < 1 ? 'just now' : fmtTime(w.fetchedAt)}`} · Open-Meteo · tap a day for details</span></div>
   </section>`;
 }
 
-function waterHtml(c) {
-  const p = E.wateringPlan(c);
-  const r = p.rate;
-  const tierName = `Tier ${r.idx + 1}`;
-  if (p.off) {
-    return `<section class="card">
-      <div class="kicker">${icon('drop')} Watering</div>
-      <p class="reason">${esc(p.reason)}</p>
-    </section>`;
-  }
-  const lawnRows = p.rows.filter((x) => x.inches != null);
-  const sloped = lawnRows.filter((x) => x.cycles);
-  return `<section class="card" data-testid="water">
-    <div class="kicker">${icon('drop')} Watering this week</div>
-    <div class="big-line"><span class="big-num">${fmtNum(p.need, 2)}″</span><span class="muted">from sprinklers${p.est ? ' (typical weather)' : ''}</span></div>
-    <p class="reason">Lawn uses ~${fmtNum(p.etc, 2)}″ over 7 days; ${fmtNum(p.rain, 2)}″ of rain is forecast. About ${f0(p.gallons)} gal ≈ <strong>${fmtMoney(p.cost)}</strong> at ${fmtMoney(r.per1000)}/1,000 (${tierName}${r.sewer ? ' + sewer' : ''}).</p>
-    ${sloped.length ? `<p class="note">${icon('slope', 'note-ic')}Cycle and soak on slopes: ${sloped.map((x) => `${esc(x.zone.name)} ${x.cycles.cycles}×${f0(x.cycles.each)} min`).join(', ')}, 30–60 min soak between (Rachio Smart Cycle).</p>` : ''}
-    <details class="zone-water">
-      <summary>By zone</summary>
-      <div class="zw-table">${p.rows.map((x) => `
-        <div class="zw-row"><span>${esc(x.zone.name)}${x.zone.lawn === false ? ' <span class="tag">non-lawn</span>' : ''}</span>
-        <span>${f0(x.minutes)} min</span><span>${f0(x.gallons)} gal</span></div>`).join('')}</div>
-      <p class="hint">Your Rachio adjusts on its own; use this as a cross-check on runtime and cost.</p>
-    </details>
+export function shoppingHtml(title, plans, testid = 'shopping') {
+  if (!plans || !plans.length) return '';
+  return `<section class="card shop-card" data-testid="${testid}">
+    <div class="mini-kicker">${icon('cart')}<span>${esc(title)}</span></div>
+    <ul class="shop-list">${plans.map((p) => `<li class="${p.enough ? 'ok' : ''}">${icon(p.enough ? 'check' : 'cart')}<span>${esc(nobreak(p.text))}${p.uses ? ` <span class="muted">(${esc(p.uses.join(' + '))})</span>` : ''}</span></li>`).join('')}</ul>
   </section>`;
 }
 
-function upNextHtml(c) {
-  const order = { now: 0, late: 0, waiting: 1, soon: 2 };
-  const list = c.tasks.filter((t) => order[t.status] != null).sort((a, b) => order[a.status] - order[b.status]).slice(0, 3);
-  if (!list.length) return '';
-  const label = { now: 'Now', late: 'Late', waiting: 'Waiting', soon: 'Soon' };
-  return `<h2 class="section-h">Up next</h2>
-    <div class="group">${list.map((t) => `
-      <button type="button" class="row row-btn" data-action="task" data-id="${t.id}">
-        <span class="row-main"><span class="row-title">${esc(t.title)}</span><span class="row-sub">${esc(t.product ? `${t.product.name} · Elite ${t.product.elite || '–'} · ${fmtNum(t.lbs, 1)} ${t.product.unit}` : t.trigger.text)}</span></span>
-        <span class="badge badge-${t.status}">${label[t.status]}</span>${icon('chev', 'chev')}
-      </button>`).join('')}</div>`;
+function upNextHtml(a) {
+  if (!a.next.length) return '';
+  return `<section class="agenda" data-testid="upnext-section">
+    <div class="sec-row"><h2 class="sec-title">Up next</h2><button type="button" class="sec-aside link" data-action="nav" data-tab="calendar">Calendar ${icon('chev', 'chev')}</button></div>
+    <div class="list-card">${a.next.slice(0, 6).map(taskRow).join('')}</div>
+  </section>`;
 }
 
 export function renderToday(el, c) {
+  if (S.settings.winter?.on) { renderWinter(el, c); return; }
+  const rec = E.mowRecommendation(c);
+  const head = Season.feedingHeadline(c, c.feedings);
+  const a = Season.agenda(c);
+  const shop = Season.feedingShopping(c, c.feedings);
+  const bits = [];
+  if (rec.status !== 'off') bits.push(`${S.settings.mower.heights[rec.position - 1]}″ target height`);
+  if (c.cond.soil24 != null) bits.push(`${f0(c.cond.soil24)}°F soil`);
+  bits.push(`${fmtNum(c.cond.rainPast7, 2)}″ rain (7d)`);
   el.innerHTML = `
-    <header class="page-head">
-      <h1 class="large-title">Today</h1>
-      <p class="subtitle">${esc(fmtDay(c.today, { long: true }))}</p>
-    </header>
-    ${timersHtml(c)}
-    ${mowHtml(c)}
-    ${alertsHtml(c)}
-    ${weatherHtml(c)}
-    ${waterHtml(c)}
-    ${upNextHtml(c)}`;
+    ${heroHtml(c, { summary: bits.join(' · '), feedLine: head.text, feedOpen: head.open })}
+    <div class="page-body">
+      ${promptHtml(c)}
+      ${timersHtml(c)}
+      ${mowHtml(c, rec)}
+      ${sectionsHtml(a)}
+      <div class="pair">${waterCardHtml(c)}${condCardHtml(c)}</div>
+      ${forecastHtml(c)}
+      ${shop ? shoppingHtml(`Shopping list · ${shop.feeding.title}`, shop.items) : ''}
+      ${upNextHtml(a)}
+    </div>`;
+  const pb = el.querySelector('.pattern-btn');
+  if (pb) onLongPress(pb, () => popover(pb, E.patternText(Number(pb.dataset.pattern))));
 }

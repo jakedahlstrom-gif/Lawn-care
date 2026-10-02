@@ -8,12 +8,15 @@ const addDays = (s, n) => {
   return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
 };
 
-export function mockForecast({ today, past = 21, future = 10, day = () => ({}), utcOffset = -18000, nowHour = 9 } = {}) {
+export function mockForecast({ today, past = 21, future = 16, day = () => ({}), utcOffset = -18000, nowHour = 9 } = {}) {
   const daily = {
     time: [], weather_code: [], temperature_2m_max: [], temperature_2m_min: [], precipitation_sum: [],
-    precipitation_probability_max: [], et0_fao_evapotranspiration: [], wind_speed_10m_max: [],
+    precipitation_probability_max: [], et0_fao_evapotranspiration: [], wind_speed_10m_max: [], snowfall_sum: [],
   };
-  const hourly = { time: [], temperature_2m: [], precipitation: [], soil_temperature_6cm: [] };
+  const hourly = {
+    time: [], temperature_2m: [], precipitation: [], precipitation_probability: [], soil_temperature_6cm: [],
+    wind_speed_10m: [], relative_humidity_2m: [], snow_depth: [],
+  };
   for (let i = -past; i < future; i++) {
     const date = addDays(today, i);
     const o = { tMax: 66, tMin: 46, rain: 0, prob: 5, et0: 0.12, code: 1, wind: 7, ...day(date, i) };
@@ -27,12 +30,17 @@ export function mockForecast({ today, past = 21, future = 10, day = () => ({}), 
     daily.precipitation_probability_max.push(i < 0 ? null : (o.rain >= 0.1 ? Math.max(o.prob, 80) : o.prob));
     daily.et0_fao_evapotranspiration.push(o.et0);
     daily.wind_speed_10m_max.push(o.wind);
+    daily.snowfall_sum.push(o.snow || 0);
     for (let h = 0; h < 24; h++) {
       hourly.time.push(`${date}T${pad(h)}:00`);
       const k = (1 - Math.cos(((h - 5) / 24) * 2 * Math.PI)) / 2;
       hourly.temperature_2m.push(Math.round((o.tMin + (o.tMax - o.tMin) * k) * 10) / 10);
       hourly.precipitation.push(rainHours.includes(h) ? Math.round((o.rain / rainHours.length) * 1000) / 1000 : 0);
       hourly.soil_temperature_6cm.push(Math.round((soil + Math.sin(((h - 9) / 24) * 2 * Math.PI) * 2) * 10) / 10);
+      hourly.precipitation_probability.push(rainHours.includes(h) && o.rain > 0 ? Math.max(o.prob, 70) : Math.min(o.prob, 20));
+      hourly.wind_speed_10m.push(Math.round(o.wind * (0.6 + 0.4 * k) * 10) / 10);
+      hourly.relative_humidity_2m.push(Math.round(85 - 35 * k));
+      hourly.snow_depth.push(o.depthFt ?? 0);
     }
   }
   return {
@@ -43,11 +51,14 @@ export function mockForecast({ today, past = 21, future = 10, day = () => ({}), 
     timezone_abbreviation: 'CDT',
     current_units: { time: 'iso8601', interval: 'seconds', temperature_2m: '°F', weather_code: 'wmo code', wind_speed_10m: 'mp/h' },
     current: { time: `${today}T${pad(nowHour)}:00`, interval: 900, temperature_2m: 58, weather_code: 2, wind_speed_10m: 6 },
-    hourly_units: { time: 'iso8601', temperature_2m: '°F', precipitation: 'inch', soil_temperature_6cm: '°F' },
+    hourly_units: {
+      time: 'iso8601', temperature_2m: '°F', precipitation: 'inch', precipitation_probability: '%', soil_temperature_6cm: '°F',
+      wind_speed_10m: 'mp/h', relative_humidity_2m: '%', snow_depth: 'ft',
+    },
     hourly,
     daily_units: {
       time: 'iso8601', weather_code: 'wmo code', temperature_2m_max: '°F', temperature_2m_min: '°F', precipitation_sum: 'inch',
-      precipitation_probability_max: '%', et0_fao_evapotranspiration: 'inch', wind_speed_10m_max: 'mp/h',
+      precipitation_probability_max: '%', et0_fao_evapotranspiration: 'inch', wind_speed_10m_max: 'mp/h', snowfall_sum: 'inch',
     },
     daily,
   };

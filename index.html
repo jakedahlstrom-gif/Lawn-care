@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Lawn Care</title>
-  <meta name="description" content="Mowing, feeding, weed control and watering planner for a Minnesota Kentucky bluegrass lawn. Works offline; data stays on your device.">
-  <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="Mowing, feeding, weeding and watering planner for a Minnesota Kentucky bluegrass lawn. Works offline; data stays on your device.">
+  <meta name="theme-color" content="#f4f5f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0f0c" media="(prefers-color-scheme: dark)">
   <meta name="color-scheme" content="light dark">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,9 +20,10 @@
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
+  <div class="status-shield" aria-hidden="true"></div>
   <main id="views">
     <section id="view-today" class="view" data-view="today" aria-label="Today"></section>
-    <section id="view-plan" class="view" data-view="plan" aria-label="Plan"></section>
+    <section id="view-calendar" class="view" data-view="calendar" aria-label="Calendar"></section>
     <section id="view-history" class="view" data-view="history" aria-label="History"></section>
     <section id="view-yard" class="view" data-view="yard" aria-label="Yard"></section>
   </main>

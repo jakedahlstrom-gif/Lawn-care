@@ -8,11 +8,11 @@ export function forecastUrl(lat, lon) {
   const p = new URLSearchParams({
     latitude: String(lat),
     longitude: String(lon),
-    current: 'temperature_2m,weather_code,wind_speed_10m',
-    hourly: 'temperature_2m,precipitation,soil_temperature_6cm',
-    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,et0_fao_evapotranspiration,wind_speed_10m_max',
+    current: 'temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m',
+    hourly: 'temperature_2m,precipitation,precipitation_probability,soil_temperature_6cm,wind_speed_10m,relative_humidity_2m,snow_depth',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,et0_fao_evapotranspiration,wind_speed_10m_max,snowfall_sum',
     past_days: '21',
-    forecast_days: '10',
+    forecast_days: '16',
     timezone: 'auto',
     temperature_unit: 'fahrenheit',
     precipitation_unit: 'inch',
@@ -23,7 +23,19 @@ export function forecastUrl(lat, lon) {
 
 const toIn = (v, unit) => (v == null ? null : /mm/i.test(unit || '') ? v / 25.4 : v);
 const toF = (v, unit) => (v == null ? null : /C/.test(unit || '') ? v * 1.8 + 32 : v);
-const toMph = (v, unit) => (v == null ? null : /km/i.test(unit || '') ? v / 1.609 : v);
+const toMph = (v, unit) => (v == null ? null : /km/i.test(unit || '') ? v / 1.609 : /m\/s/i.test(unit || '') ? v * 2.237 : v);
+/** Snow depth arrives in meters by default, or feet with US units. */
+const depthIn = (v, unit) => {
+  if (v == null) return null;
+  const u = unit || 'm';
+  if (/^ft/i.test(u)) return v * 12;
+  if (/^cm/i.test(u)) return v / 2.54;
+  if (/inch|^in/i.test(u)) return v;
+  if (/^mm/i.test(u)) return v / 25.4;
+  return v * 39.37;
+};
+/** Snowfall arrives in cm by default, or inches with US units. */
+const snowIn = (v, unit) => (v == null ? null : /inch|^in/i.test(unit || '') ? v : /mm/i.test(unit || '') ? v / 25.4 : v / 2.54);
 
 /** Turn an Open-Meteo response into the shape the engine uses. Handles metric or US units. */
 export function normalize(raw, fetchedAt) {
@@ -34,7 +46,11 @@ export function normalize(raw, fetchedAt) {
     t: t.slice(0, 13),
     temp: toF(h.temperature_2m?.[i], hu.temperature_2m),
     rain: toIn(h.precipitation?.[i], hu.precipitation) || 0,
+    pop: h.precipitation_probability?.[i] ?? null,
     soil: toF(h.soil_temperature_6cm?.[i], hu.soil_temperature_6cm),
+    wind: toMph(h.wind_speed_10m?.[i], hu.wind_speed_10m),
+    rh: h.relative_humidity_2m?.[i] ?? null,
+    snowDepth: depthIn(h.snow_depth?.[i], hu.snow_depth),
   }));
   const soilByDay = {};
   for (const x of hours) {
@@ -54,6 +70,7 @@ export function normalize(raw, fetchedAt) {
       rainProb: d.precipitation_probability_max?.[i] ?? null,
       et0: toIn(d.et0_fao_evapotranspiration?.[i], du.et0_fao_evapotranspiration),
       wind: toMph(d.wind_speed_10m_max?.[i], du.wind_speed_10m_max),
+      snow: snowIn(d.snowfall_sum?.[i], du.snowfall_sum),
       soil: s && s.length >= 12 ? s.reduce((a, b) => a + b, 0) / s.length : null,
     };
   });
@@ -63,6 +80,7 @@ export function normalize(raw, fetchedAt) {
     temp: toF(raw.current.temperature_2m, cu.temperature_2m),
     code: raw.current.weather_code ?? null,
     wind: toMph(raw.current.wind_speed_10m, cu.wind_speed_10m),
+    rh: raw.current.relative_humidity_2m ?? null,
   } : null;
   return {
     fetchedAt,
