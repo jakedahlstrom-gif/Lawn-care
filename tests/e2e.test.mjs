@@ -668,3 +668,45 @@ test('manifest, icons and service worker asset list', async () => {
   }
   for (const f of [...files, 'index.html', 'manifest.webmanifest']) assert.ok(listed.has(f), `sw.js is missing ${f}`);
 });
+
+test('My Zones connects to the Worker and shows Rachio zones and events', async () => {
+  const { page, errors, context } = await open({ path: '#yard' });
+  const W = 'https://rachio.example.workers.dev';
+  const now = Date.parse('2026-10-01T06:00:00-05:00');
+  await context.route(`${W}/**`, (r) => {
+    const req = r.request();
+    const u = new URL(req.url());
+    const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'X-App-Password' };
+    if (req.method() === 'OPTIONS') return r.fulfill({ status: 204, headers });
+    if (req.headers()['x-app-password'] !== 'pw') return r.fulfill({ status: 401, headers, json: { error: 'Wrong password' } });
+    if (u.pathname === '/person/info') return r.fulfill({ headers, json: { id: 'p1' } });
+    if (u.pathname === '/person/p1') {
+      return r.fulfill({
+        headers,
+        json: { devices: [{ id: 'd1', name: 'Rachio 3', status: 'ONLINE', zones: [
+          { zoneNumber: 2, name: 'Back yard', enabled: true, lastWateredDate: now, lastWateredDuration: 1200 },
+          { zoneNumber: 1, name: 'Front yard', enabled: true },
+          { zoneNumber: 3, name: 'Unused', enabled: false },
+        ] }] },
+      });
+    }
+    if (u.pathname === '/device/d1/event') return r.fulfill({ headers, json: [{ eventDate: now, summary: 'Back yard completed watering' }] });
+    return r.fulfill({ status: 404, headers, json: {} });
+  });
+  await page.click('.view.active [data-action="my-zones"]');
+  await guard(page);
+  await sheet(page).locator('#rachio-url').fill(W);
+  await sheet(page).locator('#rachio-pw').fill('bad');
+  await sheet(page).locator('[data-act="connect"]').click();
+  await sheet(page).getByText('Wrong password').waitFor();
+  await sheet(page).locator('#rachio-pw').fill('pw');
+  await sheet(page).locator('[data-act="connect"]').click();
+  const zones = sheet(page).locator('[data-testid="rachio-zones"] .row-title');
+  await zones.first().waitFor();
+  assert.deepEqual(await zones.allTextContents(), ['1. Front yard', '2. Back yard']);
+  assert.match(await sheet(page).textContent(), /Back yard completed watering/);
+  assert.match(await sheet(page).textContent(), /20 min/);
+  assert.deepEqual(await overflow(page, '.sheet-wrap:last-child .sheet'), []);
+  assert.deepEqual(errors.filter((e) => !/401/.test(e)), []);
+  await context.close();
+});

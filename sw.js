@@ -1,7 +1,7 @@
 // Service worker: caches the app shell so Lawn Care opens and works offline.
 // Bump VERSION whenever any app file changes so phones pick up the update.
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const CACHE = `lawn-care-${VERSION}`;
 const ASSETS = [
   './',
@@ -23,6 +23,7 @@ const ASSETS = [
   'js/views/calendar.js',
   'js/views/forecast.js',
   'js/views/history.js',
+  'js/views/rachio.js',
   'js/views/today.js',
   'js/views/winter.js',
   'js/views/yard.js',
