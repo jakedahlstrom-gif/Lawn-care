@@ -726,6 +726,8 @@ test('Today shows the saved Rachio Worker connection status', async () => {
   // Saved address and password, and the Worker answers.
   let { page, errors, context } = await open({ setup, seed: save('pw') });
   await status(page).getByText('Rachio connected').waitFor();
+  await openLog(page, 'Watering');
+  assert.match(await sheet(page).textContent(), /Rachio runs show in Yard → My Zones/);
   assert.deepEqual(errors, []);
   await context.close();
 
@@ -737,5 +739,7 @@ test('Today shows the saved Rachio Worker connection status', async () => {
   // Nothing saved on this device.
   ({ page, context } = await open({ setup }));
   assert.equal(await status(page).textContent(), 'Rachio not connected yet');
+  await openLog(page, 'Watering');
+  assert.match(await sheet(page).textContent(), /Rachio isn’t connected on this device/);
   await context.close();
 });
