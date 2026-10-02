@@ -1,4 +1,5 @@
-// Today tab: photo header, next mow, today/tomorrow/up-next tasks, watering + conditions, forecast, shopping.
+// Today tab: photo header, next mow, this week (water + soil timing), today/tomorrow/up-next tasks, watering +
+// conditions, forecast, shopping.
 // In Winter Mode the winter screen replaces it.
 
 import { S } from '../store.js';
@@ -119,6 +120,41 @@ function sectionsHtml(a) {
     </section>` : ''}`;
 }
 
+const ADVICE_ICON = { water: 'water', skip: 'check', hold: 'rain' };
+const ALERT_BADGE = { now: 'now', soon: 'soon', later: 'later', late: 'missed' };
+
+/** This Week: rain behind and ahead, water lost to evapotranspiration, soil now, the watering call and soil timing. */
+function weekHtml(wk, alerts) {
+  if (!wk.available) {
+    return `<button type="button" class="card week-card week-empty" data-action="refresh-weather" data-testid="this-week">
+      <span class="kicker">${icon('drop')} This week</span>
+      <span class="reason">${S.weatherState === 'loading' ? 'Loading weather…' : 'Weather unavailable — tap to retry'}</span>
+    </button>`;
+  }
+  const a = wk.advice;
+  const inches = (n) => `${fmtNum(n, 2)}″`;
+  const stat = (id, label, value, sub) => `<div class="wk-stat"><span class="wk-l">${label}</span><span class="wk-v" data-testid="week-${id}">${value}</span><span class="wk-s">${sub}</span></div>`;
+  const chance = wk.ahead.total >= 0.01 && wk.ahead.chance != null ? ` · ${f0(wk.ahead.chance)}%` : '';
+  return `<section class="card week-card" data-testid="this-week">
+    <div class="kicker">${icon('drop')} This week</div>
+    <div class="week-call call-${a.status}" data-testid="water-advice" data-status="${a.status}"><span class="call-ic">${icon(ADVICE_ICON[a.status])}</span><span>${esc(a.title)}</span></div>
+    <div class="wk-grid">
+      ${stat('rain', 'Rain', inches(wk.rain), wk.watered > 0 ? `last 7 days · +${inches(wk.watered)} watered` : 'last 7 days')}
+      ${stat('ahead', 'Rain forecast', inches(wk.ahead.total), `next 3 days${chance}`)}
+      ${stat('et', 'Evapotranspiration', inches(wk.et), 'water lost, 7 days')}
+      ${stat('soil', 'Soil temperature', wk.soilNow != null ? `${f0(wk.soilNow)}°F` : '–', `now${wk.soil24 != null ? ` · 24-h avg ${f0(wk.soil24)}°` : ''}`)}
+    </div>
+    <p class="reason" data-testid="water-reason">${esc(a.reason)}</p>
+    ${alerts.length ? `<div class="soil-alerts" data-testid="soil-alerts">
+      <div class="sa-head">${icon('thermo')}<span>Soil timing · bluegrass</span></div>
+      ${alerts.map((x) => `<button type="button" class="sa-row" data-action="feeding" data-id="${esc(x.feedingId)}" data-alert="${x.id}">
+        <span class="sa-main"><span class="sa-title">${esc(x.title)}</span><span class="sa-text">${esc(nobreak(x.text))}</span></span>
+        <span class="badge badge-${ALERT_BADGE[x.level]}">${esc(x.badge)}</span>
+      </button>`).join('')}
+    </div>` : ''}
+  </section>`;
+}
+
 function waterCardHtml(c) {
   const w = E.waterWeek(c);
   return `<div class="card mini water-card" data-testid="water">
@@ -131,7 +167,7 @@ function waterCardHtml(c) {
   </div>`;
 }
 
-function condCardHtml(c) {
+function condCardHtml(c, rain7) {
   const w = S.weather;
   const today = w?.dayMap?.[c.today];
   const cur = w?.current;
@@ -147,7 +183,7 @@ function condCardHtml(c) {
     <div class="mini-kicker">${icon(desc.icon)}<span>Conditions</span></div>
     <div class="mini-big">${cur?.temp != null ? `${f0(cur.temp)}°` : today ? `${f0(today.tMax)}°` : '–'}<span class="mini-desc">${esc(desc.label)}</span></div>
     <div class="mini-lines">${today ? `H ${f0(today.tMax)}° · L ${f0(today.tMin)}°` : ''}</div>
-    <div class="mini-split"><span>Soil <b data-testid="soil24">${c.cond.soil24 != null ? `${f0(c.cond.soil24)}°` : '–'}</b></span><span>Rain 7d <b>${fmtNum(c.cond.rainPast7, 2)}″</b></span></div>
+    <div class="mini-split"><span>Soil <b data-testid="soil24">${c.cond.soil24 != null ? `${f0(c.cond.soil24)}°` : '–'}</b></span><span>Rain 7d <b>${fmtNum(rain7, 2)}″</b></span></div>
   </button>`;
 }
 
@@ -196,18 +232,21 @@ export function renderToday(el, c) {
   const head = Season.feedingHeadline(c, c.feedings);
   const a = Season.agenda(c);
   const shop = Season.feedingShopping(c, c.feedings);
+  const week = E.thisWeek(c);
+  const rain7 = week.available ? week.rain : c.cond.rainPast7;
   const bits = [];
   if (rec.status !== 'off') bits.push(`${S.settings.mower.heights[rec.position - 1]}″ target height`);
   if (c.cond.soil24 != null) bits.push(`${f0(c.cond.soil24)}°F soil`);
-  bits.push(`${fmtNum(c.cond.rainPast7, 2)}″ rain (7d)`);
+  bits.push(`${fmtNum(rain7, 2)}″ rain (7d)`);
   el.innerHTML = `
     ${heroHtml(c, { summary: bits.join(' · '), feedLine: head.text, feedOpen: head.open })}
     <div class="page-body">
       ${promptHtml(c)}
       ${timersHtml(c)}
       ${mowHtml(c, rec)}
+      ${weekHtml(week, Season.soilAlerts(c))}
       ${sectionsHtml(a)}
-      <div class="pair">${waterCardHtml(c)}${condCardHtml(c)}</div>
+      <div class="pair">${waterCardHtml(c)}${condCardHtml(c, rain7)}</div>
       ${forecastHtml(c)}
       ${shop ? shoppingHtml(`Shopping list · ${shop.feeding.title}`, shop.items) : ''}
       ${upNextHtml(a)}

@@ -505,6 +505,87 @@ export function agenda(ctx) {
   return out;
 }
 
+/* ======================= soil timing ======================= */
+
+/** Roots of cool-season grass stop taking up nitrogen as soil (2.4″ deep) drops to about 40°F. */
+export const ROOTS_STOP = 40;
+
+/** First forecast day whose average soil temperature reaches (`up`) or drops to (`down`) `target`. */
+export function soilCrossing(weather, today, target, dir = 'up') {
+  if (!weather) return null;
+  const days = E.dayTable(weather, addDays(today, 1), addDays(today, 15)).filter((d) => !d.est && d.soil != null);
+  return days.find((d) => (dir === 'up' ? d.soil >= target : d.soil <= target))?.date || null;
+}
+
+/**
+ * Soil-temperature timing alerts for Kentucky bluegrass: the spring crabgrass preventer (soil 50–55°F) and fall
+ * fertilizer (feed while roots are active; stop as soil nears 40°F). Each follows the feeding schedule, so an alert
+ * never says "now" while the Calendar says otherwise. Level: now | soon | later | late.
+ */
+export function soilAlerts(ctx) {
+  const { today, weather } = ctx;
+  const cond = ctx.cond || E.conditions(ctx);
+  const soil = cond.soil24;
+  if (soil == null) return [];
+  const schedule = ctx.feedings || feedingSchedule(ctx);
+  const m = md(today);
+  const s = `${f0(soil)}°F`;
+  const out = [];
+  const pending = (f) => f && ['open', 'waiting', 'upcoming'].includes(f.status);
+
+  const spring = schedule.find((f) => f.id === 'feed-spring');
+  if (m >= 315 && m < 601 && pending(spring)) {
+    const name = shortName(spring.product) || 'the preventer';
+    const base = { id: 'crabgrass', feedingId: spring.id, title: 'Crabgrass preventer' };
+    if (spring.status === 'open') {
+      out.push({
+        ...base, level: 'now', badge: 'Apply now',
+        text: soil >= PREVENTER.target
+          ? `Soil is ${s} — crabgrass starts sprouting once soil holds ${PREVENTER.target}°F. Get ${name} down right away.`
+          : `Soil is ${s} and warming toward ${PREVENTER.target}°F, when crabgrass sprouts. Best time for ${name}.`,
+      });
+    } else {
+      const reach = soil < PREVENTER.opens ? soilCrossing(weather, today, PREVENTER.opens, 'up') : null;
+      if (soil >= PREVENTER.opens) {
+        out.push({ ...base, level: 'soon', badge: fmtMonthDay(spring.start), text: `Soil is already ${s} in an early warm spell. The window opens ${fmtMonthDay(spring.start)}.` });
+      } else if (reach && daysBetween(today, reach) <= 14) {
+        out.push({ ...base, level: 'soon', badge: `~${fmtMonthDay(reach)}`, text: `Soil is ${s} and forecast to reach ${PREVENTER.opens}°F around ${fmtMonthDay(reach)}, when the window opens. Have ${name} on hand.` });
+      } else {
+        out.push({ ...base, level: 'later', badge: 'Not yet', text: `Soil is ${s}. The window opens when soil climbs past ${PREVENTER.opens}°F, usually late April.` });
+      }
+    }
+  }
+
+  const fall = schedule.find((f) => f.season === 'fall' && pending(f));
+  if (m >= 815 && m <= 1130 && fall) {
+    const name = shortName(fall.product) || 'fertilizer';
+    const early = fall.id === 'feed-early-fall' && !fall.combinedWith;
+    const base = { id: 'fall-feed', feedingId: fall.id, title: fall.title };
+    if (soil <= ROOTS_STOP) {
+      out.push({ ...base, level: 'late', badge: 'Too cold', text: `Soil is ${s} — roots have about stopped taking up nitrogen. Skip ${name} until spring; never spread on frozen ground.` });
+    } else if (fall.status === 'open') {
+      const stop = soilCrossing(weather, today, ROOTS_STOP, 'down');
+      out.push({
+        ...base, level: 'now', badge: 'Feed now',
+        text: early
+          ? `Soil is ${s}${soil > 70 ? ' and cooling' : ''} — bluegrass roots are rebuilding after summer, so this feeding counts most.`
+          : `Soil is ${s}. Roots keep taking up nitrogen until soil drops near ${ROOTS_STOP}°F${stop ? ` (forecast around ${fmtMonthDay(stop)})` : ''}, so feed while the grass is still green.`,
+      });
+    } else {
+      const cool = soil > 55 ? soilCrossing(weather, today, 55, 'down') : null;
+      out.push({
+        ...base, level: daysBetween(today, fall.start) <= 14 ? 'soon' : 'later', badge: fmtMonthDay(fall.start),
+        text: early
+          ? `Soil is ${s}. The early-fall feeding goes down as soil cools below 70°F, around Labor Day.`
+          : soil > 55
+            ? `Soil is ${s}. The last feeding goes down as top growth slows and soil cools toward 50°F${cool ? ` — forecast to reach 55°F around ${fmtMonthDay(cool)}` : ', usually mid-October'}.`
+            : `Soil is ${s} and top growth is slowing — the last feeding of the year opens ${fmtMonthDay(fall.start)}.`,
+      });
+    }
+  }
+  return out;
+}
+
 /* ======================= winter mode ======================= */
 
 function slopePerDay(points) {
