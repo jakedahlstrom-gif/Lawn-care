@@ -318,7 +318,7 @@ export const deletePhoto = (id) => db.del('photos', id);
 
 export async function exportData({ includePhotos = true } = {}) {
   return {
-    app: 'lawn-care-pwa',
+    app: 'lawn-care-pwa', // backup format id from the app's first name; kept so every backup still imports
     schema: SCHEMA,
     exportedAt: new Date().toISOString(),
     settings: S.settings,
@@ -335,7 +335,7 @@ export async function exportData({ includePhotos = true } = {}) {
 export function validateBackup(obj) {
   const ok = obj && obj.app === 'lawn-care-pwa' && obj.settings && typeof obj.settings === 'object'
     && Array.isArray(obj.zones) && Array.isArray(obj.products) && Array.isArray(obj.logs);
-  if (!ok) throw new Error('That file isn’t a Lawn Care backup.');
+  if (!ok) throw new Error('That file isn’t a Lawn IQ backup.');
   const hasIds = (arr) => arr.every((x) => x && typeof x.id === 'string' && x.id);
   if (!hasIds(obj.zones) || !hasIds(obj.products) || !hasIds(obj.logs)) throw new Error('The backup is missing record IDs.');
   if (obj.schema > SCHEMA) throw new Error('This backup is from a newer version of the app.');

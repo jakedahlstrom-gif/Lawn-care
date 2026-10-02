@@ -613,7 +613,7 @@ test('backup: export JSON, reset, import restores (photos, header and Rachio run
   await page.click('.view.active [data-action="settings"]');
   await guard(page);
   const [download] = await Promise.all([page.waitForEvent('download'), sheet(page).locator('[data-act="export"]').click()]);
-  assert.match(download.suggestedFilename(), /^lawn-care-backup-2026-10-02\.json$/);
+  assert.match(download.suggestedFilename(), /^lawn-iq-backup-2026-10-02\.json$/);
   const dir = await mkdtemp(join(tmpdir(), 'lawn-'));
   const file = join(dir, 'backup.json');
   await download.saveAs(file);
@@ -632,7 +632,7 @@ test('backup: export JSON, reset, import restores (photos, header and Rachio run
   const bad = join(dir, 'bad.json');
   await writeFile(bad, '{"hello": 1}');
   await sheet(page).locator('[data-import]').setInputFiles(bad);
-  await page.waitForSelector('.toast:has-text("isn’t a Lawn Care backup")');
+  await page.waitForSelector('.toast:has-text("isn’t a Lawn IQ backup")');
   await sheet(page).locator('[data-import]').setInputFiles(file);
   await page.waitForSelector('.dialog:has-text("Replace all data")');
   await page.click('.dialog [data-v="1"]');
@@ -727,6 +727,11 @@ test('manifest, icons, link preview and service worker asset list', async () => 
   const og = /property="og:image" content="https:\/\/jakedahlstrom-gif\.github\.io\/Lawn-care\/([^"]+)"/.exec(html)[1];
   assert.equal(await size(og), '1200x630');
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  // The app's name everywhere it shows: home screen, install, tab title, link preview.
+  assert.equal(manifest.name, 'Lawn IQ');
+  assert.equal(manifest.short_name, 'Lawn IQ');
+  for (const tag of ['<title>Lawn IQ</title>', 'name="apple-mobile-web-app-title" content="Lawn IQ"', 'property="og:title" content="Lawn IQ"', 'property="og:site_name" content="Lawn IQ"']) assert.ok(html.includes(tag), tag);
+  assert.doesNotMatch(html, /Lawn Care/);
   for (const icon of manifest.icons) {
     const png = await readFile(join(ROOT, icon.src));
     assert.equal(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`, icon.sizes);

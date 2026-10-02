@@ -1,4 +1,4 @@
-// Lawn Care Rachio proxy: a Cloudflare Worker that forwards a few read-only Rachio API calls.
+// Lawn IQ Rachio proxy: a Cloudflare Worker that forwards a few read-only Rachio API calls.
 // The Rachio key never leaves Cloudflare. It lives in the RACHIO_API_KEY secret.
 // Callers must send the shared password (APP_PASSWORD secret) in the X-App-Password header.
 //

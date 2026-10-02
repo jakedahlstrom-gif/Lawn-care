@@ -1,6 +1,6 @@
 // Thin promise wrapper around IndexedDB. Everything lives on the device.
 
-const DB_NAME = 'lawncare';
+const DB_NAME = 'lawncare'; // the app's first name; renaming it would orphan saved data
 const DB_VERSION = 2; // 2: Rachio runs
 export const STORES = ['kv', 'zones', 'products', 'logs', 'photos', 'runs'];
 

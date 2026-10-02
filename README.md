@@ -1,4 +1,4 @@
-# Lawn Care
+# Lawn IQ
 
 A mobile-first Progressive Web App for a Kentucky bluegrass lawn in Prior Lake, MN. Plain HTML, CSS and JavaScript with no build step. It installs to the iPhone home screen, works offline, and keeps all data on the device in IndexedDB.
 
@@ -67,7 +67,7 @@ Turn it on from the Winter pill on Today or in Settings. The app suggests it aft
 The home-screen icon is saved when you add the app, so a new icon needs a fresh install. Removing the app from the home screen also deletes its data on the phone, so back up first:
 
 1. **Yard → gear → Export JSON backup**, and save it to Files.
-2. Remove Lawn Care from the home screen.
+2. Remove the app from the home screen.
 3. Open the site in Safari, pull down to reload once, then **Share → Add to Home Screen**.
 4. Open the new icon, then **Yard → gear → Import JSON backup**. Reconnect Rachio in Yard → My Zones; the Worker address and password aren't in backups.
 

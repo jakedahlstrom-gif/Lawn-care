@@ -1,6 +1,6 @@
-# Lawn Care Rachio Worker
+# Lawn IQ Rachio Worker
 
-A small Cloudflare Worker that lets the Lawn Care app read your Rachio data without putting your Rachio key in the app.
+A small Cloudflare Worker that lets the Lawn IQ app read your Rachio data without putting your Rachio key in the app.
 
 It allows only three read-only calls, and each one needs the shared password in the `X-App-Password` header:
 
