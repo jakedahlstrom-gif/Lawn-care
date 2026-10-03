@@ -42,6 +42,7 @@ function subtitle(l, dupes) {
       if (area > 0) bits.push(`${fmtNum((l.effects.nLbs / area) * 1000, 2)} lb N/1k`);
     }
   }
+  if (l.type === 'fert' && l.elite) bits.push(`setting ${l.elite}`);
   if (l.type === 'weed' && l.gallons) bits.push(`${fmtNum(l.gallons, 2)} gal mix`);
   if (l.type === 'pull' && l.howMuch) bits.push(PULL[l.howMuch] || l.howMuch);
   if (l.type === 'water') {

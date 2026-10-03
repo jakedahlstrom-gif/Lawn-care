@@ -288,10 +288,19 @@ test('feeding: inventory, shopping list, timers, nitrogen and checklist update; 
   await openLog(page, 'Fertilize');
   assert.match(await sheet(page).locator('.choice.on .choice-title').textContent(), /WinterGuard/);
   assert.equal(await sheet(page).locator('[data-field="amount"]').inputValue(), '18.75');
-  assert.equal(await sheet(page).locator('.calc-big').textContent(), '2.75');
+  // The spreader setting starts at the bag's and can be changed for this feeding.
+  const elite = sheet(page).locator('[data-field="elite"]');
+  assert.equal(await elite.inputValue(), '2.75');
+  assert.equal(await sheet(page).locator('[data-out="elite-default"]').isHidden(), true);
+  await elite.fill('3');
+  assert.equal(await sheet(page).locator('[data-out="elite-default"]').isVisible(), true);
+  assert.match(await sheet(page).locator('[data-out="elite-default"]').textContent(), /Use 3 for WinterGuard next time.*Bag: 2\.75/s);
+  await sheet(page).locator('[data-field="saveElite"]').check();
   await save(page, 'Feeding logged');
   assert.equal((await product(page, 'p-scotts-winterguard')).onHand, 0);
+  assert.equal((await product(page, 'p-scotts-winterguard')).elite, '3');
   const [log] = await idb(page, 'logs');
+  assert.equal(log.elite, '3');
   assert.equal(log.effects.deducted, 12.5);
   assert.equal(log.effects.nLbs, 6);
   assert.match(await page.textContent('.timer-keepOff'), /Keep kids and pets off until 1:0\d PM/);
@@ -300,6 +309,7 @@ test('feeding: inventory, shopping list, timers, nitrogen and checklist update; 
   assert.equal(await page.getAttribute('[data-action="check"][data-id="fall-fert"]', 'aria-checked'), 'true');
   await tab(page, 'history');
   assert.equal(await page.textContent('[data-testid="total-n"]'), '0.8');
+  assert.match(await page.textContent('.log-row'), /setting 3/);
 
   await page.click('.log-row');
   await page.waitForSelector('.log-sheet');
