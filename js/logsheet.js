@@ -1,12 +1,12 @@
 // Quick Log: the "+" menu and the Mow / Fertilize / Spot spray / Pulled weeds / Watering / Other sheets
 // (also used to edit). Saving needs a 1-second press-and-hold; Undo stays available for 5 seconds.
 
-import { S, saveLog, deleteLog, restoreLog, savePhoto, deletePhoto, getPhoto } from './store.js';
+import { S, saveLog, deleteLog, restoreLog, savePhoto, deletePhoto, getPhoto, saveProduct } from './store.js';
 import { openSheet, bindHold, holdButtonHtml, toast, confirmDialog, segmented } from './ui.js';
 import { icon, TYPE_ICON, patternIcon } from './icons.js';
 import * as E from './engine.js';
 import * as Season from './season.js';
-import { OTHER_KINDS, PRODUCT_TYPES, SPREADER_TYPES, MOW_PATTERNS } from './defaults.js';
+import { OTHER_KINDS, PRODUCT_TYPES, SPREADER_TYPES, MOW_PATTERNS, shortName } from './defaults.js';
 import { rachioState } from './views/rachio.js';
 import { esc, uid, clone, round, num, addDays, relDay, fmtDay, fmtNum, fmtMoney, noonOf, nobreak } from './util.js';
 
@@ -74,6 +74,7 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
       const next = Season.nextFeeding(c.feedings || Season.feedingSchedule(c));
       const p = S.products.find((x) => x.id === preset.productId) || next?.product || productsFor('fert')[0];
       d.productId = p?.id || null;
+      d.elite = p?.elite || '';
     } else if (type === 'weed') {
       const list = productsFor('weed');
       const p = list.find((x) => x.id === preset.productId) || list[0];
@@ -96,7 +97,9 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     photo: undefined, // undefined = unchanged, null = removed, string = new data URL
     existingPhoto: null,
     saving: false,
+    saveElite: false, // also make the edited spreader setting the product's default
   };
+  if (type === 'fert' && d.elite == null) d.elite = S.products.find((p) => p.id === d.productId)?.elite || '';
 
   const product = () => S.products.find((p) => p.id === d.productId) || null;
   const area = () => (type === 'fert' ? E.lawnArea(S.zones, d.zones) : E.zoneArea(S.zones, d.zones));
@@ -269,7 +272,11 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     const nPer = p.unit === 'lb' && sqft > 0 ? ((amt * (p.n || 0)) / 100 / sqft) * 1000 : 0;
     return `
       <div class="calc">
-        <div class="calc-row"><span>${esc(S.settings.spreader.model || 'Spreader')} setting</span><strong class="calc-big">${esc(p.elite || '–')}</strong></div>
+        <div class="calc-row"><span>${esc(S.settings.spreader.model || 'Spreader')} setting</span>
+          <span class="calc-input"><input class="calc-big" data-field="elite" type="text" inputmode="decimal" autocomplete="off" value="${esc(d.elite ?? '')}" placeholder="–" aria-label="Spreader setting"></span></div>
+        <div class="calc-row elite-default" data-out="elite-default" ${String(d.elite ?? '').trim() !== String(p.elite || '') ? '' : 'hidden'}>
+          <label class="check-inline"><input type="checkbox" data-field="saveElite" ${st.saveElite ? 'checked' : ''}> Use ${esc(String(d.elite ?? '').trim() || '–')} for ${esc(shortName(p))} next time</label>
+          <span class="muted">Bag: ${esc(p.elite || '–')}</span></div>
         <div class="calc-row"><span>Amount for ${fmtNum(sqft, 0)} sq ft</span>
           <span class="calc-input"><input data-field="amount" type="text" inputmode="decimal" value="${fmtNum(amt, 2)}" aria-label="Amount used"> ${esc(p.unit)}</span></div>
         ${p.unit === 'lb' && p.n ? `<div class="calc-row"><span>Nitrogen</span><strong data-out="nper">${fmtNum(nPer, 2)} lb N / 1,000 sq ft</strong></div>` : ''}
@@ -451,6 +458,8 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     } else if (act === 'product') {
       d.productId = a.dataset.id || null;
       st.amountManual = false;
+      d.elite = product()?.elite || '';
+      st.saveElite = false;
       recompute();
     } else if (act === 'kind') d.kind = a.dataset.kind;
     else if (act === 'details') st.details = !st.details;
@@ -474,7 +483,16 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     const f = e.target.dataset.field;
     if (f === 'notes') d.notes = e.target.value;
     else if (f === 'title') d.title = e.target.value;
-    else if (f === 'amount') { d.amount = e.target.value; st.amountManual = true; refreshCalc(); refreshHold(); } else if (f === 'hours') { d.hours = e.target.value; st.hoursManual = true; refreshHold(); } else if (f === 'gallons' || f === 'minutes') { d[f] = e.target.value; recompute(); refreshCalc(); refreshHold(); }
+    else if (f === 'elite') {
+      d.elite = e.target.value;
+      const row = sheet.body.querySelector('[data-out="elite-default"]');
+      const p = product();
+      if (row && p) {
+        row.hidden = d.elite.trim() === String(p.elite || '');
+        const label = row.querySelector('label');
+        label.lastChild.textContent = ` Use ${d.elite.trim() || '–'} for ${shortName(p)} next time`;
+      }
+    } else if (f === 'amount') { d.amount = e.target.value; st.amountManual = true; refreshCalc(); refreshHold(); } else if (f === 'hours') { d.hours = e.target.value; st.hoursManual = true; refreshHold(); } else if (f === 'gallons' || f === 'minutes') { d[f] = e.target.value; recompute(); refreshCalc(); refreshHold(); }
   });
 
   sheet.body.addEventListener('change', async (e) => {
@@ -484,6 +502,8 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
       render();
     } else if (f === 'final') {
       d.final = e.target.checked;
+    } else if (f === 'saveElite') {
+      st.saveElite = e.target.checked;
     } else if (f === 'photo' && e.target.files?.[0]) {
       try {
         st.photo = await readPhoto(e.target.files[0]);
@@ -512,7 +532,7 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
     if (type === 'fert' || type === 'weed') {
       const p = product();
       if (p) {
-        Object.assign(log, { productId: p.id, productName: p.name, productType: p.type, unit: p.unit, n: p.n, elite: p.elite, amount: round(Math.max(0, num(d.amount)), 2) });
+        Object.assign(log, { productId: p.id, productName: p.name, productType: p.type, unit: p.unit, n: p.n, elite: type === 'fert' ? String(d.elite ?? p.elite ?? '').trim() : p.elite, amount: round(Math.max(0, num(d.amount)), 2) });
         if (type === 'weed') Object.assign(log, { gallons: round(Math.max(0, num(d.gallons)), 2), mixRate: p.mixRate || 0, method: 'spot' });
       } else {
         Object.assign(log, { productId: null, productName: '', productType: null, amount: 0 });
@@ -538,6 +558,10 @@ export function openLogSheet(type, { existing = null, preset = {} } = {}) {
         log.photoId = newPhotoId;
       } else if (st.photo === null) log.photoId = null;
       const saved = await saveLog(log, prev);
+      const p = product();
+      if (type === 'fert' && st.saveElite && p && log.elite && log.elite !== (p.elite || '')) {
+        await saveProduct({ ...S.products.find((x) => x.id === p.id), elite: log.elite, src: { ...(p.src || {}), elite: 'meas' } });
+      }
       const oldPhoto = prev?.photoId && prev.photoId !== saved.photoId ? prev.photoId : null;
       // Let the checkmark show, then close and offer Undo for 5 seconds.
       setTimeout(() => {

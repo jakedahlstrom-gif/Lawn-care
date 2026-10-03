@@ -1142,6 +1142,10 @@ img { max-width: 100%; }
 .calc-row > span:first-child { color: var(--text-2); min-width: 0; }
 .calc-row strong, .calc-row > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .calc-big { font-size: 22px; color: var(--accent); }
+.calc-input input.calc-big { font-weight: 700; text-align: right; }
+.elite-default { font-size: 14px; flex-wrap: wrap; }
+.check-inline { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
+.check-inline input { width: 20px; height: 20px; accent-color: var(--accent-fill); }
 .calc-input { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .calc-input input {
   width: 84px;
