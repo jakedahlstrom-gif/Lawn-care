@@ -71,6 +71,24 @@ function checklistHtml(c) {
     <p class="footer-note">Items check themselves off when you log the matching activity.</p>`;
 }
 
+/** Season progress: one segment per feeding window, filled as each is done. */
+function planHtml(c) {
+  const all = c.feedings;
+  if (!all.length) return '';
+  const done = all.filter((f) => f.status === 'done').length;
+  const next = all.find((f) => ['open', 'waiting', 'upcoming'].includes(f.status));
+  const startOf = (f) => (f.start <= f.end ? f.start : f.ws);
+  return `<section class="card plan-card" data-testid="plan-progress">
+    <div class="mini-kicker">${icon('bag')}<span>Feeding plan · ${yearOf(c.today)}</span></div>
+    <div class="plan-top">
+      <div class="plan-big"><span>${done}</span><span class="plan-of">of ${all.length} done</span></div>
+      ${next ? `<div class="plan-next"><span class="plan-next-l">${next.status === 'open' ? 'Open now' : 'Next'}</span><span class="plan-next-t">${esc(next.title)}</span><span class="plan-next-d">${esc(Season.rangeText(startOf(next), next.end))}</span></div>` : ''}
+    </div>
+    <div class="plan-segs" role="img" aria-label="${done} of ${all.length} feedings done">${all.map((f) => `
+      <span class="pseg pseg-${f.status}${f.optional ? ' opt' : ''}"><span class="pseg-bar"></span><span class="pseg-d">${esc(fmtMonthDay(startOf(f)))}</span></span>`).join('')}</div>
+  </section>`;
+}
+
 export function renderCalendar(el, c) {
   const cond = c.cond;
   const y = yearOf(c.today);
@@ -90,15 +108,16 @@ export function renderCalendar(el, c) {
       <div class="cond"><span class="cond-l">Highs, 5 days</span><span class="cond-v">${cond.hasWeather ? `${f0(cond.highs5)}°F` : '–'}</span></div>
       <div class="cond"><span class="cond-l">Hard freeze</span><span class="cond-v">${esc(freeze)}</span></div>
     </div>
+    ${planHtml(c)}
     <div class="list-card toggle-card">
       <div class="row"><span class="row-main"><span class="row-title">Show past</span><span class="row-sub">${showPast ? 'Showing everything this year' : `${hiddenCount} past ${hiddenCount === 1 ? 'item' : 'items'} hidden`}</span></span>${switchHtml('calendar.showPast', showPast, 'Show past tasks')}</div>
     </div>
     ${fallFirst ? checklistHtml(c) : ''}
     <h2 class="section-h">Feedings <span class="section-count">Scotts lineup · 4+ weeks apart</span></h2>
-    ${feedings.length ? feedings.map((f) => feedingCard(f, c)).join('') : '<p class="footer-note">No more feedings this year. Next up: the crabgrass preventer in spring.</p>'}
+    ${feedings.length ? `<div class="timeline">${feedings.map((f) => feedingCard(f, c)).join('')}</div>` : '<p class="footer-note">No more feedings this year. Next up: the crabgrass preventer in spring.</p>'}
     ${SEASONS.map(([k, label]) => {
       const list = tasks.filter((t) => t.season === k);
-      return list.length ? `<h2 class="section-h">${label}</h2>${list.map(taskCard).join('')}` : '';
+      return list.length ? `<h2 class="section-h">${label}</h2><div class="timeline">${list.map(taskCard).join('')}</div>` : '';
     }).join('')}
     ${fallFirst ? '' : checklistHtml(c)}`;
 }

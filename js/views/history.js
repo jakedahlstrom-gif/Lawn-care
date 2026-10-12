@@ -53,21 +53,55 @@ function subtitle(l, dupes) {
   return bits.filter(Boolean).join(' · ');
 }
 
+/** Logged activity per month for the season: mows in the accent, everything else stacked above. */
+function monthsHtml(year, today) {
+  const logs = S.logs.filter((l) => yearOf(l.date) === year);
+  if (!logs.length) return '';
+  const monthOf = (l) => Number(l.date.slice(5, 7)) - 1;
+  const ms = logs.map(monthOf);
+  const rows = [];
+  for (let m = Math.min(3, ...ms); m <= Math.max(9, ...ms); m++) {
+    const these = logs.filter((l) => monthOf(l) === m);
+    const mow = these.filter((l) => l.type === 'mow').length;
+    rows.push({ m, mow, other: these.length - mow });
+  }
+  const max = Math.max(...rows.map((r) => r.mow + r.other), 1);
+  const nowM = yearOf(today) === year ? Number(today.slice(5, 7)) - 1 : -1;
+  const h = (n) => `${((n / max) * 100).toFixed(1)}%`;
+  const label = rows.filter((r) => r.mow + r.other).map((r) => `${monthName(r.m)} ${r.mow + r.other}`).join(', ');
+  return `<div class="months-wrap">
+    <div class="months-head"><span class="used-h">Activity by month</span><span class="months-key"><span class="k-mow">Mows</span><span class="k-other">Other</span></span></div>
+    <div class="months" role="img" aria-label="Logged activity by month: ${esc(label)}">${rows.map((r) => `
+      <span class="mo${r.m === nowM ? ' is-now' : ''}"><span class="mo-n">${r.mow + r.other || ''}</span><span class="mo-col">${r.other ? `<span class="mo-other" style="height:${h(r.other)}"></span>` : ''}${r.mow ? `<span class="mo-mow" style="height:${h(r.mow)}"></span>` : ''}</span><span class="mo-base"></span><span class="mo-l">${monthName(r.m).slice(0, 3)}</span></span>`).join('')}</div>
+  </div>`;
+}
+
 function totalsHtml(c, year) {
   const t = E.seasonTotals(c, year);
   const pct = clamp(((t.nPer1000 + t.mulchCredit) / (t.target || 1)) * 100, 0, 100);
   const appliedPct = clamp((t.nPer1000 / (t.target || 1)) * 100, 0, 100);
+  // Nitrogen ring: applied in the accent, mulched-clipping credit as a fainter continuation.
+  const R = 52;
+  const C = 2 * Math.PI * R;
+  const arc = (p) => `${((p / 100) * C).toFixed(2)} ${C.toFixed(2)}`;
   return `<section class="card totals" data-testid="totals">
     <div class="mini-kicker">${icon('leaf')}<span>${year} season</span></div>
-    <div class="stats">
-      <div class="stat"><div class="stat-v" data-testid="total-mows">${t.mows}</div><div class="stat-l">Mows</div></div>
-      <div class="stat"><div class="stat-v" data-testid="total-n">${fmtNum(t.nPer1000, 2)}</div><div class="stat-l">lb N per 1k sq ft</div></div>
-      <div class="stat"><div class="stat-v" data-testid="total-water">${fmtMoney(t.waterCost)}</div><div class="stat-l">Watering</div></div>
-    </div>
-    <div class="nbar" role="img" aria-label="Nitrogen ${fmtNum(t.nPer1000, 2)} of ${fmtNum(t.target, 1)} pounds per 1,000 square feet target">
-      <span class="nbar-applied" style="width:${appliedPct}%"></span><span class="nbar-mulch" style="width:${Math.max(0, pct - appliedPct)}%"></span>
+    <div class="tot-top">
+      <div class="ring" role="img" aria-label="Nitrogen ${fmtNum(t.nPer1000, 2)} of ${fmtNum(t.target, 1)} pounds per 1,000 square feet target">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="${R}" class="ring-track" stroke-width="10"/>
+          ${pct > appliedPct ? `<circle cx="60" cy="60" r="${R}" class="ring-mulch" stroke-width="10" stroke-dasharray="${arc(pct)}"/>` : ''}
+          ${appliedPct > 0 ? `<circle cx="60" cy="60" r="${R}" class="ring-arc" stroke-width="10" stroke-dasharray="${arc(appliedPct)}"/>` : ''}
+        </svg>
+        <div class="ring-center"><span class="ring-v" data-testid="total-n">${fmtNum(t.nPer1000, 2)}</span><span class="ring-l">of ${fmtNum(t.target, 1)} lb N<br>per 1k sq ft</span></div>
+      </div>
+      <div class="tot-side">
+        <div class="stat"><div class="stat-v" data-testid="total-mows">${t.mows}</div><div class="stat-l">Mows</div></div>
+        <div class="stat"><div class="stat-v" data-testid="total-water">${fmtMoney(t.waterCost)}</div><div class="stat-l">Watering</div></div>
+      </div>
     </div>
     <p class="hint">${fmtNum(t.nPer1000, 2)} lb N per 1,000 sq ft applied${t.mulchCredit > 0 ? `, plus ~${fmtNum(t.mulchCredit, 2)} returned by mulched clippings` : ''}, toward a ${fmtNum(t.target, 1)} lb season target. ${fmtNum(t.hours, 1)} mowing hours · ${t.sprays} spot sprays · ${t.pulls} weeding sessions · ${fmtNum(t.waterGallons, 0)} gal watered${t.rachioRuns ? ` (${t.rachioRuns} Rachio ${t.rachioRuns === 1 ? 'run' : 'runs'})` : ''}.</p>
+    ${monthsHtml(year, c.today)}
     ${t.products.length ? `<div class="used">
       <div class="used-h">Products used</div>
       ${t.products.map((p) => `<div class="used-row"><span>${esc(nobreak(p.name))}</span><span>${fmtNum(p.amount, 1)} ${esc(p.unit)} · ${p.apps}×${p.cost > 0 ? ` · ${fmtMoney(p.cost)}` : ''}</span></div>`).join('')}
@@ -109,6 +143,6 @@ export function renderHistory(el, c) {
       <div class="empty">
         ${icon('history', 'empty-ic')}
         <p>${f === 'all' ? 'Nothing logged this season yet.' : 'Nothing of this type logged this season.'}</p>
-        <p class="muted">Tap the green <strong>+</strong> to log a mow, feeding, weeding, watering or anything else — including past dates.</p>
+        <p class="muted">Tap <strong>+</strong> to log a mow, feeding, weeding, watering or anything else — including past dates.</p>
       </div>`}`;
 }

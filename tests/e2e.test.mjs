@@ -657,10 +657,10 @@ test('dark mode is the default; Auto follows the phone and Light sticks', async 
   const { page, errors, context } = await open({ colorScheme: 'light', path: '#yard' });
   const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   const meta = () => page.evaluate(() => [...document.querySelectorAll('meta[name="theme-color"]')].map((m) => m.content));
-  const DARK = 'rgb(11, 15, 12)';
-  const LIGHT = 'rgb(244, 245, 241)';
+  const DARK = 'rgb(10, 11, 13)';
+  const LIGHT = 'rgb(243, 244, 246)';
   assert.equal(await bg(), DARK); // dark even on a phone set to light
-  assert.deepEqual(await meta(), ['#0b0f0c', '#0b0f0c']);
+  assert.deepEqual(await meta(), ['#0a0b0d', '#0a0b0d']);
   await page.click('.view.active [data-action="settings"]');
   await guard(page);
   const pick = async (v) => { await sheet(page).locator(`[data-seg="appearance.theme"] [data-value="${v}"]`).click(); await page.waitForTimeout(200); };

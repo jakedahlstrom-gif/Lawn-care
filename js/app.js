@@ -78,7 +78,27 @@ function applyTheme() {
   if (t === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', t);
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0b0f0c' : '#f4f5f1'));
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#0a0b0d' : '#f3f4f6'));
+}
+
+/** Cards rise into place when a tab opens. Later re-renders (weather, the minute timer) don't replay it. */
+function animateIn(el) {
+  if (!el.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const ease = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+  const items = [...el.querySelectorAll(':scope > *, :scope > .page-body > *')].filter((n) => !n.classList.contains('page-body'));
+  items.slice(0, 9).forEach((n, i) => {
+    const frames = n.classList.contains('hero') ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }];
+    n.animate(frames, { duration: 520, delay: i * 45, easing: ease, fill: 'backwards' });
+  });
+  // Meters, rings and bars grow from zero.
+  el.querySelectorAll('.rung-bar, .wk-fill, .fc-range, .pseg-bar, .mo-col, .cd-bar span').forEach((n) => {
+    const horizontal = n.matches('.wk-fill, .pseg-bar, .cd-bar span');
+    n.animate([{ transform: horizontal ? 'scaleX(0)' : 'scaleY(0)' }, { transform: 'none' }], { duration: 760, delay: 160, easing: ease, fill: 'backwards' });
+  });
+  el.querySelectorAll('.ring-arc, .ring-mulch').forEach((n) => {
+    const len = Number(n.getAttribute('stroke-dasharray')?.split(' ')[0]) || 0;
+    n.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: 1000, delay: 180, easing: ease, fill: 'backwards' });
+  });
 }
 
 function switchTab(name, { scrollTop = false } = {}) {
@@ -95,6 +115,7 @@ function switchTab(name, { scrollTop = false } = {}) {
   });
   if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
   renderNow();
+  animateIn(viewEl(name));
   window.scrollTo(0, scrollTop ? 0 : scrollPos[name] || 0);
 }
 
