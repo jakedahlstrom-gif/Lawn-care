@@ -38,9 +38,12 @@ export function heroHtml(c, { summary, feedLine, feedOpen = false, winter = fals
           <button type="button" class="hero-round" data-action="settings" aria-label="Settings">${icon('gear')}</button>
         </div>
       </div>
-      <h1 class="hero-title" data-testid="greeting">${esc(greeting(c.now))}</h1>
-      <p class="hero-sum" data-testid="summary">${esc(summary)}</p>
-      ${feedLine ? `<div class="hero-feed ${feedOpen ? 'open' : ''}" data-testid="feed-line">${icon(winter ? 'thermo' : 'bag')}<span>${esc(nobreak(feedLine))}</span></div>` : ''}
+      <div class="hero-main">
+        <p class="hero-date">${esc(fmtDay(c.today, { long: true }))}</p>
+        <h1 class="hero-title" data-testid="greeting">${esc(greeting(c.now))}</h1>
+        <p class="hero-sum" data-testid="summary">${esc(summary)}</p>
+        ${feedLine ? `<div class="hero-feed ${feedOpen ? 'open' : ''}" data-testid="feed-line">${icon(winter ? 'thermo' : 'bag')}<span>${esc(nobreak(feedLine))}</span></div>` : ''}
+      </div>
     </div>
   </header>`;
 }
@@ -50,7 +53,7 @@ function timersHtml(c) {
   if (!list.length) return '';
   const ic = { keepOff: 'shield', noMow: 'mow', noRain: 'drop' };
   return `<section class="timers" aria-label="Safety timers">${list.map((t) => `
-    <div class="timer timer-${t.kind}">${icon(ic[t.kind])}<div><div class="timer-text">${esc(t.text)}</div>${t.product ? `<div class="timer-sub">${esc(nobreak(t.product))}</div>` : ''}</div></div>`).join('')}</section>`;
+    <div class="timer timer-${t.kind}"><span class="timer-ic">${icon(ic[t.kind])}</span><div><div class="timer-text">${esc(t.text)}</div>${t.product ? `<div class="timer-sub">${esc(nobreak(t.product))}</div>` : ''}</div></div>`).join('')}</section>`;
 }
 
 export function promptHtml(c) {
@@ -63,6 +66,14 @@ export function promptHtml(c) {
       <button type="button" class="btn btn-small btn-filled" data-action="${p.action === 'on' ? 'winter-on' : 'winter-off'}">${p.action === 'on' ? 'Turn on' : 'Turn off'}</button>
     </div>
   </section>`;
+}
+
+/** Deck heights as a row of bars, tallest = highest position; the recommended one is lit. */
+function ladderHtml(heights, position) {
+  const hs = heights.map(Number);
+  const max = Math.max(...hs.filter((h) => h > 0), 1);
+  return `<div class="ladder" aria-hidden="true">${hs.map((h, i) => `
+    <span class="rung${i + 1 === position ? ' on' : ''}"><span class="rung-bar" style="--h:${Math.max(16, Math.round(((h || 0) / max) * 100))}%"></span><span class="rung-n">${i + 1}</span></span>`).join('')}</div>`;
 }
 
 function mowHtml(c, r) {
@@ -86,6 +97,7 @@ function mowHtml(c, r) {
       </div>
       <button type="button" class="pattern-btn" data-testid="pattern" data-pattern="${pat.id}" aria-label="Mowing pattern: ${esc(pat.label)}. Press and hold for details.">${patternIcon(pat.angle, 48)}</button>
     </div>
+    ${ladderHtml(heights, r.position)}
     <div class="mow-stats">
       <span class="mstat"><span class="mstat-v" data-testid="mow-pos">${r.position}</span><span class="mstat-l">Position</span></span>
       <span class="mstat"><span class="mstat-v" data-testid="mow-height">${heights[r.position - 1]}″</span><span class="mstat-l">Height</span></span>
@@ -133,18 +145,25 @@ function weekHtml(wk, alerts) {
   }
   const a = wk.advice;
   const inches = (n) => `${fmtNum(n, 2)}″`;
-  const stat = (id, label, value, sub) => `<div class="wk-stat"><span class="wk-l">${label}</span><span class="wk-v" data-testid="week-${id}">${value}</span><span class="wk-s">${sub}</span></div>`;
+  // Rain, forecast and ET bars share one scale so water in and water used compare at a glance.
+  const scale = Math.max(wk.rain + (wk.watered || 0), wk.ahead.total, wk.et, 0.25);
+  const w = (n) => `${Math.max(0, Math.min(100, ((n || 0) / scale) * 100)).toFixed(1)}%`;
+  const bar = (...fills) => `<span class="wk-bar" aria-hidden="true">${fills.filter(([, n]) => n > 0).map(([cls, n]) => `<span class="wk-fill ${cls}" style="width:${w(n)}"></span>`).join('')}</span>`;
+  // Soil gauge: 30–85°F, with notches at 50° and 70° where the bluegrass timing calls change.
+  const soilAt = (t) => `${Math.max(0, Math.min(100, ((t - 30) / 55) * 100)).toFixed(1)}%`;
+  const gauge = `<span class="wk-gauge" aria-hidden="true"><span class="gauge-tick" style="left:${soilAt(50)}"></span><span class="gauge-tick" style="left:${soilAt(70)}"></span>${wk.soilNow != null ? `<span class="gauge-mark" style="left:${soilAt(wk.soilNow)}"></span>` : ''}</span>`;
+  const stat = (id, label, value, sub, viz) => `<div class="wk-stat"><span class="wk-l">${label}</span><span class="wk-v" data-testid="week-${id}">${value}</span>${viz}<span class="wk-s">${sub}</span></div>`;
   const chance = wk.ahead.total >= 0.01 && wk.ahead.chance != null ? ` · ${f0(wk.ahead.chance)}%` : '';
   return `<section class="card week-card" data-testid="this-week">
     <div class="kicker">${icon('drop')} This week</div>
     <div class="week-call call-${a.status}" data-testid="water-advice" data-status="${a.status}"><span class="call-ic">${icon(ADVICE_ICON[a.status])}</span><span>${esc(a.title)}</span></div>
-    <div class="wk-grid">
-      ${stat('rain', 'Rain', inches(wk.rain), wk.watered > 0 ? `last 7 days · +${inches(wk.watered)} watered` : 'last 7 days')}
-      ${stat('ahead', 'Rain forecast', inches(wk.ahead.total), `next 3 days${chance}`)}
-      ${stat('et', 'Evapotranspiration', inches(wk.et), 'water lost, 7 days')}
-      ${stat('soil', 'Soil temperature', wk.soilNow != null ? `${f0(wk.soilNow)}°F` : '–', `now${wk.soil24 != null ? ` · 24-h avg ${f0(wk.soil24)}°` : ''}`)}
-    </div>
     <p class="reason" data-testid="water-reason">${esc(a.reason)}</p>
+    <div class="wk-grid">
+      ${stat('rain', 'Rain', inches(wk.rain), wk.watered > 0 ? `last 7 days · +${inches(wk.watered)} watered` : 'last 7 days', bar(['', wk.rain], ['is-watered', wk.watered]))}
+      ${stat('ahead', 'Rain forecast', inches(wk.ahead.total), `next 3 days${chance}`, bar(['is-ahead', wk.ahead.total]))}
+      ${stat('et', 'Evapotranspiration', inches(wk.et), 'water lost, 7 days', bar(['is-et', wk.et]))}
+      ${stat('soil', 'Soil temperature', wk.soilNow != null ? `${f0(wk.soilNow)}°F` : '–', `now${wk.soil24 != null ? ` · 24-h avg ${f0(wk.soil24)}°` : ''}`, gauge)}
+    </div>
     ${alerts.length ? `<div class="soil-alerts" data-testid="soil-alerts">
       <div class="sa-head">${icon('thermo')}<span>Soil timing · bluegrass</span></div>
       ${alerts.map((x) => `<button type="button" class="sa-row" data-action="feeding" data-id="${esc(x.feedingId)}" data-alert="${x.id}">
@@ -196,6 +215,11 @@ export function forecastHtml(c) {
   const w = S.weather;
   if (!w) return '';
   const days = c.cond.next.slice(0, 7);
+  // Each day's low-to-high range sits on the week's shared temperature scale.
+  const temps = days.flatMap((d) => [d.tMin, d.tMax]).filter(Number.isFinite);
+  const lo = temps.length ? Math.min(...temps) : 0;
+  const span = (temps.length ? Math.max(...temps) : 1) - lo || 1;
+  const at = (t) => `${(((t - lo) / span) * 100).toFixed(1)}%`;
   const ageMin = Math.round((Date.now() - w.fetchedAt) / 60000);
   const stale = ageMin > 90;
   return `<section class="card forecast-card" data-testid="weather">
@@ -207,6 +231,7 @@ export function forecastHtml(c) {
         <span class="fc-name">${d.date === c.today ? 'Today' : WEEKDAYS[new Date(`${d.date}T12:00`).getDay()]}</span>
         <span class="fc-ic">${icon(d.est ? 'cloud' : (d.snow > 0.1 ? 'snowcloud' : dd.icon))}</span>
         <span class="fc-hi">${f0(d.tMax)}°</span>
+        <span class="fc-bar" aria-hidden="true">${Number.isFinite(d.tMin) && Number.isFinite(d.tMax) ? `<span class="fc-range" style="--top:calc(100% - ${at(d.tMax)});--bot:${at(d.tMin)}"></span>` : ''}</span>
         <span class="fc-lo">${f0(d.tMin)}°</span>
         <span class="fc-rain ${d.rain >= 0.1 ? 'wet' : ''}">${d.rain >= 0.01 ? `${fmtNum(d.rain, 2)}″` : '—'}</span>
       </button>`;

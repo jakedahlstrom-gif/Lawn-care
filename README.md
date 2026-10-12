@@ -5,13 +5,13 @@ A mobile-first Progressive Web App for a Kentucky bluegrass lawn in Prior Lake, 
 ## Tabs
 
 - **Today**: a photo header (pick your own from the camera roll) with your target height, soil temperature, 7-day rain and the next feeding window. Below it are:
-  - the Next Mow card (day, mower position, height, reason, and a rotating stripe-pattern icon);
-  - the This Week card (see below);
+  - the Next Mow card (day, a bar for each mower position with the recommended one lit, height, growth, reason, and a rotating stripe-pattern icon);
+  - the This Week card (see below), with rain, forecast rain and evapotranspiration drawn as bars on one scale and soil temperature on a gauge;
   - Today, Tomorrow and Up Next task lists;
   - Watering and Conditions cards. Watering totals rain, Rachio runs and logged hand watering for the past 7 days, shows whether the Rachio Worker saved on this device is connected, and opens My Zones;
-  - the 16-day forecast. Tap any day for hourly detail and lawn verdicts (mow, spot spray, pull weeds, feed).
-- **Calendar**: the Scotts feeding plan (Halts → Turf Builder Lawn Food → optional summer → WinterGuard), spaced at least 4 weeks apart. Missed windows roll into the next one. It also has the season's tasks, the fall checklist (ticks itself off from your logs), a shopping list in whole bags, and a "Show past" toggle.
-- **History**: every log entry, newest first, with filters, edit and delete, plus season totals (mows, lb N per 1,000 sq ft, products, watering cost).
+  - the 7-day forecast, each day's low-to-high range drawn on the week's scale. Tap any day for hourly detail and lawn verdicts (mow, spot spray, pull weeds, feed).
+- **Calendar**: the Scotts feeding plan (Halts → Turf Builder Lawn Food → optional summer → WinterGuard), spaced at least 4 weeks apart, with a progress bar of feedings done and a timeline of each window. Missed windows roll into the next one. It also has the season's tasks, the fall checklist (ticks itself off from your logs), a shopping list in whole bags, and a "Show past" toggle.
+- **History**: every log entry, newest first, with filters, edit and delete, plus season totals (a nitrogen ring toward your season target, mows, watering cost, activity by month, products).
 - **Yard**: a **My Zones** screen for Rachio watering (see below), plus rows for location, zones, mower, spreader, products, water rates, schedule and nitrogen. Each row opens a detail screen. Numbers you haven't confirmed show an **Estimated** badge; tap it once you've checked the value. The gear holds your name, header photo, appearance (Dark by default; Auto follows the phone), Winter Mode, backup and reset (press and hold).
 
 **+** in the middle of the tab bar logs a mow, fertilizer, spot spray, pulled weeds, watering, or anything else, on any past date. You save by pressing and holding for 1 second, and Undo stays available for 5 seconds after saving.
@@ -76,6 +76,15 @@ Sharing the site's address shows the app icon as the link preview (Open Graph im
 ## Backups
 
 Data lives only on the phone, including saved Rachio runs. The Worker address and password stay out of backups. Use **Yard → gear → Export JSON backup** now and then; on iPhone it opens the share sheet so you can save to Files or iCloud Drive. **Import** replaces everything on the device with a backup.
+
+## Design
+
+All styling lives in `css/app.css`, driven by tokens at the top of the file (one set for Light, one for Dark, which is the default):
+
+- **Color:** neutral graphite surfaces, one volt-lime accent (`--volt`) for primary actions, selected states and progress, and cyan (`--water`) only for water data. Amber and red are kept for warnings.
+- **Type:** the iPhone's system font (SF Pro) for reading, with large tight numerals for data, and SF Mono for small uppercase labels.
+- **Shape:** 24px cards with a hairline edge, capsule buttons and chips, and a floating glass tab bar.
+- **Motion:** cards rise in and bars grow when you switch tabs (skipped when the phone's Reduce Motion setting is on).
 
 ## Development
 
