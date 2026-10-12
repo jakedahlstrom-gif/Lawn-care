@@ -326,6 +326,8 @@ test('feeding: inventory, shopping list, timers, nitrogen and checklist update; 
   await page.click('.dialog [data-v="1"]');
   await page.waitForSelector('.toast:has-text("Entry deleted")');
   assert.equal((await product(page, 'p-scotts-winterguard')).onHand, 12.5);
+  // The app re-renders on the next animation frame after a delete; wait for it rather than racing it.
+  await page.waitForFunction(() => document.querySelector('[data-testid="total-n"]')?.textContent === '0', null, { timeout: 2000 }).catch(() => {});
   assert.equal(await page.textContent('[data-testid="total-n"]'), '0');
   await page.click('.toast-undo');
   await page.waitForTimeout(300);
