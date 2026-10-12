@@ -101,7 +101,7 @@ function animateIn(el) {
   });
 }
 
-function switchTab(name, { scrollTop = false } = {}) {
+function switchTab(name, { scrollTop = false, animate = true } = {}) {
   name = ALIASES[name] || name;
   if (!VIEWS[name]) name = 'today';
   scrollPos[current] = window.scrollY;
@@ -115,7 +115,7 @@ function switchTab(name, { scrollTop = false } = {}) {
   });
   if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
   renderNow();
-  animateIn(viewEl(name));
+  if (animate) animateIn(viewEl(name));
   window.scrollTo(0, scrollTop ? 0 : scrollPos[name] || 0);
 }
 
@@ -301,7 +301,7 @@ async function boot() {
   Yard.setYardHooks({ ctx, applyTheme, onLocationChange, setWinter });
   subscribe(() => { applyTheme(); render(); });
   wireEvents();
-  switchTab(location.hash.slice(1) || 'today');
+  switchTab(location.hash.slice(1) || 'today', { animate: false }); // weather re-renders right after boot and would cut the animation off
   document.documentElement.classList.add('ready');
   navigator.storage?.persist?.().catch(() => {});
   registerSW();
