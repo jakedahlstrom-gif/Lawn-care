@@ -16,6 +16,19 @@ A mobile-first Progressive Web App for a Kentucky bluegrass lawn in Prior Lake, 
 
 **+** in the middle of the tab bar logs a mow, fertilizer, spot spray, pulled weeds, watering, or anything else, on any past date. You save by pressing and holding for 1 second, and Undo stays available for 5 seconds after saving.
 
+## The fun stuff
+
+- **Living header:** the photo header reacts to the moment. Rain streaks when it's raining, snow when it's snowing or in Winter Mode, falling leaves from mid-September to mid-November, fireflies on summer evenings, and stars at night, with a dawn, dusk or night tint. It stays still when the phone's Reduce Motion setting is on.
+- **Cut preview** (Next Mow card): how tall the grass will be by mow day, how much the planned cut takes off, and a notch at the one-third limit.
+- **Mowing streak:** a flame chip on the Next Mow card counts the weeks in a row you've mowed.
+- **Dollar spot risk** (Today): the Smith–Kerns model, a published turf-science model, run on the last 5 days of temperature and humidity. It shows today's chance, the last few days and the next three, and the usual 20% spray threshold. It reads "Off" when the 5-day average is outside 50–95°F, when the fungus isn't active.
+- **Season at a glance** (History): a calendar heatmap of every day you mowed, fed, weeded or watered (Rachio runs included).
+- **Trophies** (History): 12 season goals, such as First Cut, Stripe Master, On a Roll (6 weeks in a row) and Marathon Mower (26.2 miles walked). Tap one for details. A new one drops in with confetti the moment you earn it.
+- **Miles walked:** your lawn area ÷ the mower's deck width (read from the mower model; 21″ if it doesn't say), with 15% overlap.
+- **Season recap** (History → Season recap): full-screen story slides with your mows, miles, favorite stripes, feeding ring, gallons, busiest month and trophies. Tap the right side for the next slide, the left side to go back, hold to pause.
+- **Add to Calendar** (Calendar → Feeding plan): exports upcoming feedings, season tasks and the next mow as a calendar file.
+- **Lawn photos** (History): every photo attached to a log, in a scrolling strip. Tap one to open its entry.
+
 ## This Week
 
 Weather and soil data come from [Open-Meteo](https://open-meteo.com/) (free, no API key) for the location in Yard → Location, which defaults to Prior Lake, MN 55372 (44.71, -93.42). The card shows:

@@ -900,3 +900,45 @@ test('Today shows the saved Rachio Worker connection status', async () => {
   assert.match(await sheet(page).textContent(), /Rachio isn’t connected on this device/);
   await context.close();
 });
+
+test('fun layer: living header, disease card, trophy unlock, heatmap, season recap, calendar export', async () => {
+  const { page, errors, context } = await open();
+  // Oct 2, partly cloudy now: fall leaves drift across the header.
+  assert.equal(await page.locator('.hero .hero-fx.fx-leaves i').count(), 8);
+  await page.waitForSelector('[data-testid="disease"]');
+  assert.match(await page.textContent('[data-testid="disease"]'), /Smith–Kerns/);
+  assert.equal(await page.locator('[data-testid="trophies"]').count(), 0);
+  // The season's first mow unlocks First Cut, without touching the Undo toast.
+  await openLog(page, 'Mow');
+  await save(page, 'Mow logged');
+  await page.waitForSelector('.trophy-pop:has-text("First Cut")');
+  assert.equal(await page.locator('.toast-undo').count(), 1);
+  await tab(page, 'history');
+  await page.waitForSelector('[data-testid="heatmap"]');
+  assert.match(await page.textContent('[data-testid="heatmap"]'), /1 active day/);
+  assert.match(await page.textContent('[data-testid="trophies"]'), /1 of 12/);
+  assert.equal(await page.locator('.trophy.earned').count(), 1);
+  assert.match(await page.textContent('[data-testid="totals"]'), /mi walked/);
+  await page.click('.trophy:has-text("Double Digits")');
+  assert.match(await page.textContent('.popover'), /10 mows in a season\. 1 \/ 10 so far/);
+  // Season recap: opens on the cover, steps forward, closes with Escape.
+  await page.click('[data-action="wrapped"]');
+  await page.waitForSelector('.story.open');
+  assert.match(await page.textContent('.st-slide.on'), /2026.*Your season on the lawn/s);
+  await page.keyboard.press('ArrowRight');
+  assert.match(await page.textContent('.st-slide.on'), /You mowed/);
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.story', { state: 'detached' });
+  // Calendar export: an .ics with the upcoming feeding.
+  await tab(page, 'calendar');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-action="export-ics"]')]);
+  const ics = await readFile(await dl.path(), 'utf8');
+  assert.match(ics, /BEGIN:VCALENDAR/);
+  assert.match(ics, /SUMMARY:🌱 Fall feeding/);
+  for (const t of ['today', 'calendar', 'history']) {
+    await tab(page, t);
+    assert.deepEqual(await overflow(page, '.view.active'), [], `overflow on ${t}`);
+  }
+  assert.deepEqual(errors, []);
+  await context.close();
+});

@@ -1,12 +1,13 @@
 // History tab: season totals and the activity log (newest first) with edit and delete.
 
-import { S } from '../store.js';
+import { S, getPhoto } from '../store.js';
 import * as E from '../engine.js';
 import { rachioWaterings, loggedDuplicates } from '../irrigation.js';
 import { icon, TYPE_ICON } from '../icons.js';
 import { segmented } from '../ui.js';
 import { MOW_PATTERNS, shortName } from '../defaults.js';
 import { esc, fmtNum, fmtMoney, fmtDay, yearOf, monthName, clamp, nobreak } from '../util.js';
+import { seasonStats, trophies, heatmapHtml } from '../fun.js';
 
 export const historyState = { filter: 'all', year: null };
 const FILTERS = [['all', 'All'], ['mow', 'Mow'], ['fert', 'Feed'], ['weeds', 'Weeds'], ['water', 'Water'], ['other', 'Other']];
@@ -76,7 +77,49 @@ function monthsHtml(year, today) {
   </div>`;
 }
 
-function totalsHtml(c, year) {
+const photoCache = new Map();
+
+/** The season's log photos as a scrolling strip; tap one to open its entry. */
+function photosHtml(year) {
+  const list = E.sortLogs(S.logs.filter((l) => l.photoId && yearOf(l.date) === year));
+  if (!list.length) return '';
+  return `<section class="card photo-card" data-testid="photos">
+    <div class="sec-row inner"><span class="mini-kicker">${icon('camera')}<span>Lawn photos</span></span><span class="heat-count">${list.length}</span></div>
+    <div class="photo-strip">${list.map((l) => `
+      <button type="button" class="ph" data-action="edit-log" data-id="${l.id}" aria-label="Photo from ${esc(fmtDay(l.date))}">
+        <img data-photo="${esc(l.photoId)}" alt=""${photoCache.has(l.photoId) ? ` src="${photoCache.get(l.photoId)}"` : ''}>
+        <span>${esc(fmtDay(l.date).replace(/^\w+, /, ''))}</span>
+      </button>`).join('')}</div>
+  </section>`;
+}
+
+function loadPhotos(el) {
+  el.querySelectorAll('img[data-photo]:not([src])').forEach((img) => {
+    const id = img.dataset.photo;
+    getPhoto(id).then((ph) => {
+      if (!ph?.dataUrl) return;
+      photoCache.set(id, ph.dataUrl);
+      img.src = ph.dataUrl;
+    }).catch(() => {});
+  });
+}
+
+function trophiesHtml(stats) {
+  const list = trophies(stats);
+  const n = list.filter((t) => t.earned).length;
+  const prog = (t) => `${fmtNum(Math.min(t.value, t.goal), 1)} / ${fmtNum(t.goal, 1)}`;
+  return `<section class="card trophy-card" data-testid="trophies">
+    <div class="sec-row inner"><span class="mini-kicker">${icon('trophy')}<span>Trophies</span></span><span class="heat-count">${n} of ${list.length}</span></div>
+    <div class="trophies">${list.map((t) => `
+      <button type="button" class="trophy${t.earned ? ' earned' : ''}" data-action="trophy" data-text="${esc(`${t.title}: ${t.text}. ${t.earned ? 'Earned this season.' : `${prog(t)} so far.`}`)}" aria-label="${esc(`${t.title}, ${t.earned ? 'earned' : prog(t)}. ${t.text}`)}">
+        <span class="tr-ic">${icon(t.icon)}</span>
+        <span class="tr-t">${esc(t.title)}</span>
+        ${t.earned ? '<span class="tr-s">Earned</span>' : `<span class="tr-bar"><span style="width:${(t.pct * 100).toFixed(0)}%"></span></span><span class="tr-s">${prog(t)}</span>`}
+      </button>`).join('')}</div>
+  </section>`;
+}
+
+function totalsHtml(c, year, stats) {
   const t = E.seasonTotals(c, year);
   const pct = clamp(((t.nPer1000 + t.mulchCredit) / (t.target || 1)) * 100, 0, 100);
   const appliedPct = clamp((t.nPer1000 / (t.target || 1)) * 100, 0, 100);
@@ -85,7 +128,7 @@ function totalsHtml(c, year) {
   const C = 2 * Math.PI * R;
   const arc = (p) => `${((p / 100) * C).toFixed(2)} ${C.toFixed(2)}`;
   return `<section class="card totals" data-testid="totals">
-    <div class="mini-kicker">${icon('leaf')}<span>${year} season</span></div>
+    <div class="sec-row inner"><span class="mini-kicker">${icon('leaf')}<span>${year} season</span></span>${stats.logs ? `<button type="button" class="wrap-btn" data-action="wrapped" data-year="${year}">${icon('play')}<span>Season recap</span></button>` : ''}</div>
     <div class="tot-top">
       <div class="ring" role="img" aria-label="Nitrogen ${fmtNum(t.nPer1000, 2)} of ${fmtNum(t.target, 1)} pounds per 1,000 square feet target">
         <svg viewBox="0 0 120 120" aria-hidden="true">
@@ -100,7 +143,7 @@ function totalsHtml(c, year) {
         <div class="stat"><div class="stat-v" data-testid="total-water">${fmtMoney(t.waterCost)}</div><div class="stat-l">Watering</div></div>
       </div>
     </div>
-    <p class="hint">${fmtNum(t.nPer1000, 2)} lb N per 1,000 sq ft applied${t.mulchCredit > 0 ? `, plus ~${fmtNum(t.mulchCredit, 2)} returned by mulched clippings` : ''}, toward a ${fmtNum(t.target, 1)} lb season target. ${fmtNum(t.hours, 1)} mowing hours · ${t.sprays} spot sprays · ${t.pulls} weeding sessions · ${fmtNum(t.waterGallons, 0)} gal watered${t.rachioRuns ? ` (${t.rachioRuns} Rachio ${t.rachioRuns === 1 ? 'run' : 'runs'})` : ''}.</p>
+    <p class="hint">${fmtNum(t.nPer1000, 2)} lb N per 1,000 sq ft applied${t.mulchCredit > 0 ? `, plus ~${fmtNum(t.mulchCredit, 2)} returned by mulched clippings` : ''}, toward a ${fmtNum(t.target, 1)} lb season target. ${fmtNum(t.hours, 1)} mowing hours${stats.miles > 0 ? ` · ≈${fmtNum(stats.miles, 1)} mi walked` : ''} · ${t.sprays} spot sprays · ${t.pulls} weeding sessions · ${fmtNum(t.waterGallons, 0)} gal watered${t.rachioRuns ? ` (${t.rachioRuns} Rachio ${t.rachioRuns === 1 ? 'run' : 'runs'})` : ''}.</p>
     ${monthsHtml(year, c.today)}
     ${t.products.length ? `<div class="used">
       <div class="used-h">Products used</div>
@@ -115,6 +158,7 @@ export function renderHistory(el, c) {
   const years = [...new Set([...S.logs.map((l) => yearOf(l.date)), yearOf(c.today)])].sort((a, b) => b - a);
   if (!historyState.year || !years.includes(historyState.year)) historyState.year = yearOf(c.today);
   const year = historyState.year;
+  const stats = seasonStats(c, year);
   const f = historyState.filter;
   const logs = E.sortLogs(S.logs.filter((l) => yearOf(l.date) === year && matches(l, f)));
   const dupes = c.runs?.length ? loggedDuplicates(logs, rachioWaterings(c)) : {};
@@ -130,7 +174,10 @@ export function renderHistory(el, c) {
       <h1 class="large-title">History</h1>
       ${years.length > 1 ? `<div class="year-pick">${segmented('year', years.map((y) => [y, String(y)]), year)}</div>` : `<p class="subtitle">${year} season</p>`}
     </header>
-    ${totalsHtml(c, year)}
+    ${totalsHtml(c, year, stats)}
+    ${heatmapHtml(c, year)}
+    ${trophiesHtml(stats)}
+    ${photosHtml(year)}
     <div class="filter-bar">${segmented('filter', FILTERS, f)}</div>
     ${groups.length ? groups.map((g) => `
       <h2 class="section-h">${monthName(Number(g.key.slice(5)) - 1)}</h2>
@@ -145,4 +192,5 @@ export function renderHistory(el, c) {
         <p>${f === 'all' ? 'Nothing logged this season yet.' : 'Nothing of this type logged this season.'}</p>
         <p class="muted">Tap <strong>+</strong> to log a mow, feeding, weeding, watering or anything else — including past dates.</p>
       </div>`}`;
+  loadPhotos(el);
 }

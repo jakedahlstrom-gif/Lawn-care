@@ -79,7 +79,7 @@ function planHtml(c) {
   const next = all.find((f) => ['open', 'waiting', 'upcoming'].includes(f.status));
   const startOf = (f) => (f.start <= f.end ? f.start : f.ws);
   return `<section class="card plan-card" data-testid="plan-progress">
-    <div class="mini-kicker">${icon('bag')}<span>Feeding plan · ${yearOf(c.today)}</span></div>
+    <div class="sec-row inner"><span class="mini-kicker">${icon('bag')}<span>Feeding plan · ${yearOf(c.today)}</span></span><button type="button" class="wrap-btn" data-action="export-ics" aria-label="Add the upcoming plan to your calendar">${icon('calAdd')}<span>Add to Calendar</span></button></div>
     <div class="plan-top">
       <div class="plan-big"><span>${done}</span><span class="plan-of">of ${all.length} done</span></div>
       ${next ? `<div class="plan-next"><span class="plan-next-l">${next.status === 'open' ? 'Open now' : 'Next'}</span><span class="plan-next-t">${esc(next.title)}</span><span class="plan-next-d">${esc(Season.rangeText(startOf(next), next.end))}</span></div>` : ''}

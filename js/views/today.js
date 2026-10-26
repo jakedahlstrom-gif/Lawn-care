@@ -11,6 +11,7 @@ import { MOW_PATTERNS } from '../defaults.js';
 import { onLongPress, popover } from '../ui.js';
 import { renderWinter } from './winter.js';
 import { rachioStatusText, rachioState } from './rachio.js';
+import { dollarSpot, riskLevel, heroMood, heroFxHtml, DOLLAR_SPOT_THRESHOLD, currentWeekStreak } from '../fun.js';
 import { esc, fmtDay, fmtNum, fmtMoney, fmtTime, fmtMonthDay, daysBetween, WEEKDAYS, nobreak } from '../util.js';
 
 const f0 = (n) => fmtNum(n, 0);
@@ -30,6 +31,7 @@ export function heroHtml(c, { summary, feedLine, feedOpen = false, winter = fals
   return `<header class="hero tone-${tone}${winter ? ' is-winter' : ''}">
     <div class="hero-img" style="background-image:url('${photo.replace(/'/g, '%27')}')" role="img" aria-label="Header photo"></div>
     <div class="hero-scrim"></div>
+    ${heroFxHtml(heroMood({ code: S.weather?.current?.code, winter, today: c.today, hour: new Date(c.now).getHours() }), c.now)}
     <div class="hero-content">
       <div class="hero-top">
         <button type="button" class="hero-loc" data-action="yard-section" data-id="location">${icon('pin')}<span>${esc(S.settings.location.name)}</span>${icon('chev', 'chev')}</button>
@@ -76,6 +78,49 @@ function ladderHtml(heights, position) {
     <span class="rung${i + 1 === position ? ' on' : ''}"><span class="rung-bar" style="--h:${Math.max(16, Math.round(((h || 0) / max) * 100))}%"></span><span class="rung-n">${i + 1}</span></span>`).join('')}</div>`;
 }
 
+/** How much of the blade the planned cut takes off, against the one-third rule. */
+function cutHtml(r) {
+  const h = Number(r.height);
+  if (r.lastHeight == null || !(r.growth > 0) || !(h > 0)) return '';
+  const pre = r.lastHeight + r.growth;
+  if (!(pre > h + 0.05)) return '';
+  const off = (pre - h) / pre;
+  return `<div class="cut" data-testid="cut-preview">
+    <div class="cut-top"><span class="cut-l">Cut preview</span><span class="cut-v">${fmtNum(pre, 1)}″ → ${h}″ · ${f0(off * 100)}% off</span></div>
+    <div class="cut-bar" role="img" aria-label="About ${fmtNum(pre, 1)} inches by mow day; cutting to ${h} inches takes off ${f0(off * 100)} percent of the blade">
+      <span class="cut-keep" style="width:${((h / pre) * 100).toFixed(1)}%"></span><span class="cut-off"></span><span class="cut-third" style="left:${(200 / 3).toFixed(1)}%"></span>
+    </div>
+    <div class="cut-s">${off <= 1 / 3 + 0.005 ? 'Within the ⅓ rule — the notch marks the most one cut should take.' : 'More than ⅓ of the blade — the notch marks the limit.'}</div>
+  </div>`;
+}
+
+const RISK = { low: ['done', 'Low'], watch: ['week', 'Watch'], high: ['missed', 'High'] };
+
+/** Dollar spot risk from the Smith–Kerns model, with the last few days and the next three. */
+function diseaseHtml(c) {
+  const ds = dollarSpot(S.weather, c.today);
+  if (!ds) return '';
+  const { now, trend, level } = ds;
+  const top = Math.max(0.3, ...trend.map((x) => x.p));
+  const pctOf = (p) => `${Math.max(3, (p / top) * 100).toFixed(1)}%`;
+  const day = (x) => (x.offset === 0 ? 'Now' : WEEKDAYS[new Date(`${x.date}T12:00`).getDay()].slice(0, 2));
+  const [cls, label] = now.active ? RISK[level] : ['scheduled', 'Dormant'];
+  return `<section class="card disease-card" data-testid="disease">
+    <div class="sec-row inner"><span class="mini-kicker">${icon('germ')}<span>Dollar spot risk</span></span><span class="badge badge-${cls}">${label}</span></div>
+    <div class="ds-top">
+      <div class="ds-big${now.active ? '' : ' is-off'}">${now.active ? `${f0(now.p * 100)}<span>%</span>` : 'Off'}</div>
+      <div class="ds-chart" aria-hidden="true">
+        <span class="ds-line" style="bottom:${((DOLLAR_SPOT_THRESHOLD / top) * 100).toFixed(1)}%"></span>
+        ${trend.map((x) => `<span class="ds-col${x.offset === 0 ? ' is-now' : ''}${x.offset > 0 ? ' is-ahead' : ''}"><span class="ds-bar lvl-${x.active ? riskLevel(x.p) : 'off'}" style="height:${x.active ? pctOf(x.p) : '3%'}"></span><span class="ds-d">${day(x)}</span></span>`).join('')}
+      </div>
+    </div>
+    <p class="reason">${now.active
+      ? `5-day average ${f0(now.tF)}°F at ${f0(now.rh)}% humidity.${level === 'high' ? ' Above the 20% spray threshold — water only at dawn, never in the evening, and keep the lawn fed; dollar spot loves hungry, wet turf.' : level === 'watch' ? ' Climbing toward the 20% spray threshold — water at dawn so blades dry fast.' : ' Well under the 20% spray threshold.'}`
+      : `Too ${now.tF < 50 ? 'cool' : 'hot'} for dollar spot: the fungus is active when the 5-day average is 50–95°F (now ${f0(now.tF)}°F).`}</p>
+    <p class="hint">Smith–Kerns model from the last 5 days of temperature and humidity; the line marks the 20% threshold.</p>
+  </section>`;
+}
+
 function mowHtml(c, r) {
   if (r.status === 'off') {
     return `<section class="card mow-hero" data-testid="mow-card">
@@ -88,12 +133,14 @@ function mowHtml(c, r) {
   const skip = r.status === 'skip';
   const n = daysBetween(c.today, r.date);
   const pat = MOW_PATTERNS[r.pattern] || MOW_PATTERNS[0];
+  const streak = currentWeekStreak(S.logs.filter((l) => l.type === 'mow').map((l) => l.date), c.today);
   return `<section class="card mow-hero" data-testid="mow-card">
     <div class="mow-top">
       <div class="mow-when">
         <div class="kicker">${icon('mow')} ${skip ? 'Mowing' : 'Next mow'} · ${esc(r.season.label)}</div>
         <div class="mow-day">${skip ? 'Skip this week' : esc(r.dayLabel)}</div>
         <div class="mow-date">${skip ? `Next check ${esc(fmtDay(r.date))}` : `${fmtMonthDay(r.date)}${n >= 2 ? ` · in ${n} days` : ''}`}</div>
+        ${streak >= 2 ? `<div class="streak" data-testid="streak">${icon('flame')}<span>${streak}-week mowing streak</span></div>` : ''}
       </div>
       <button type="button" class="pattern-btn" data-testid="pattern" data-pattern="${pat.id}" aria-label="Mowing pattern: ${esc(pat.label)}. Press and hold for details.">${patternIcon(pat.angle, 48)}</button>
     </div>
@@ -103,6 +150,7 @@ function mowHtml(c, r) {
       <span class="mstat"><span class="mstat-v" data-testid="mow-height">${heights[r.position - 1]}″</span><span class="mstat-l">Height</span></span>
       <span class="mstat"><span class="mstat-v">${r.lastDate ? `${fmtNum(r.growth, 1)}″` : '—'}</span><span class="mstat-l">Growth</span></span>
     </div>
+    ${cutHtml(r)}
     <p class="reason" data-testid="mow-reason">${esc(r.reason)}</p>
     ${r.extra ? `<div class="banner banner-info">${icon('leaf')}<div><strong>Optional extra mow:</strong> ${esc(r.extra.reason)} Position ${r.extra.pos} (${r.extra.h}″).</div></div>` : ''}
     ${r.notes.map((t) => `<p class="note">${icon('info', 'note-ic')}${esc(t)}</p>`).join('')}
@@ -275,6 +323,7 @@ export function renderToday(el, c) {
       ${timersHtml(c)}
       ${mowHtml(c, rec)}
       ${weekHtml(week, Season.soilAlerts(c))}
+      ${diseaseHtml(c)}
       ${sectionsHtml(a)}
       <div class="pair">${waterCardHtml(c)}${condCardHtml(c, rain7)}</div>
       ${forecastHtml(c)}
