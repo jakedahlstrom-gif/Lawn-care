@@ -1,7 +1,7 @@
 // Service worker: caches the app shell so Lawn IQ opens and works offline.
 // Bump VERSION whenever any app file changes so phones pick up the update.
 
-const VERSION = '2.5.1';
+const VERSION = '2.6.0';
 const CACHE = `lawn-care-${VERSION}`; // prefix kept from the app's first name so old caches get cleaned up
 const ASSETS = [
   './',
@@ -13,6 +13,7 @@ const ASSETS = [
   'js/db.js',
   'js/defaults.js',
   'js/engine.js',
+  'js/fun.js',
   'js/icons.js',
   'js/irrigation.js',
   'js/logsheet.js',
@@ -26,6 +27,7 @@ const ASSETS = [
   'js/views/history.js',
   'js/views/rachio.js',
   'js/views/today.js',
+  'js/views/wrapped.js',
   'js/views/winter.js',
   'js/views/yard.js',
   'img/header.jpg',

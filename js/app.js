@@ -5,9 +5,11 @@ import * as E from './engine.js';
 import * as Season from './season.js';
 import { fetchWeather, loadCached, isStale } from './weather.js';
 import { openLogMenu, openLogSheet, setLogHooks } from './logsheet.js';
-import { toast } from './ui.js';
+import { toast, popover } from './ui.js';
+import { seasonStats, trophies, trophyPop, buildIcs, planEvents } from './fun.js';
+import { openWrapped } from './views/wrapped.js';
 import { icon } from './icons.js';
-import { dateStr } from './util.js';
+import { dateStr, yearOf } from './util.js';
 import { renderToday } from './views/today.js';
 import { renderCalendar, openFeedingSheet, openTaskSheet } from './views/calendar.js';
 import { renderHistory, historyState } from './views/history.js';
@@ -91,8 +93,8 @@ function animateIn(el) {
     n.animate(frames, { duration: 520, delay: i * 45, easing: ease, fill: 'backwards' });
   });
   // Meters, rings and bars grow from zero.
-  el.querySelectorAll('.rung-bar, .wk-fill, .fc-range, .pseg-bar, .mo-col, .cd-bar span').forEach((n) => {
-    const horizontal = n.matches('.wk-fill, .pseg-bar, .cd-bar span');
+  el.querySelectorAll('.rung-bar, .wk-fill, .fc-range, .pseg-bar, .mo-col, .cd-bar span, .cut-keep, .ds-bar, .tr-bar span').forEach((n) => {
+    const horizontal = n.matches('.wk-fill, .pseg-bar, .cd-bar span, .cut-keep, .tr-bar span');
     n.animate([{ transform: horizontal ? 'scaleX(0)' : 'scaleY(0)' }, { transform: 'none' }], { duration: 760, delay: 160, easing: ease, fill: 'backwards' });
   });
   el.querySelectorAll('.ring-arc, .ring-mulch').forEach((n) => {
@@ -176,6 +178,47 @@ async function setWinter(on) {
   window.scrollTo(0, 0);
 }
 
+/* ---------- trophies & calendar export ---------- */
+
+let earnedNow = null;
+const earnedList = () => { const c = ctx(); return trophies(seasonStats(c, yearOf(c.today))).filter((t) => t.earned); };
+
+/** Celebrate trophies earned since the app opened (never the ones already held at launch). */
+function checkTrophies() {
+  const list = earnedList();
+  if (earnedNow) {
+    const fresh = list.filter((t) => !earnedNow.has(t.id));
+    if (fresh.length) trophyPop(fresh);
+  }
+  earnedNow = new Set(list.map((t) => t.id));
+}
+
+async function exportPlan() {
+  const c = ctx();
+  const events = planEvents(c, E.mowRecommendation(c));
+  if (!events.length) { toast('Nothing upcoming to add', { duration: 2500 }); return; }
+  const name = 'lawn-iq-plan.ics';
+  const blob = new Blob([buildIcs(events)], { type: 'text/calendar' });
+  const file = typeof File === 'function' ? new File([blob], name, { type: 'text/calendar' }) : null;
+  if (file && navigator.canShare?.({ files: [file] }) && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+    try {
+      await navigator.share({ files: [file], title: 'Lawn IQ plan' });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 20000);
+  toast(`${events.length} ${events.length === 1 ? 'event' : 'events'} ready for your calendar`, { duration: 2500 });
+}
+
 const actions = {
   log: (el) => openLogSheet(el.dataset.type),
   nav: (el) => switchTab(el.dataset.tab, { scrollTop: true }),
@@ -212,6 +255,9 @@ const actions = {
   'yard-section': (el) => Yard.openYardSection(el.dataset.id),
   settings: () => Yard.openSettingsSheet(),
   'my-zones': () => openMyZones(),
+  wrapped: (el) => openWrapped(ctx(), Number(el.dataset.year) || yearOf(ctx().today)),
+  trophy: (el) => popover(el, el.dataset.text, 4200),
+  'export-ics': () => exportPlan(),
   'toggle-winter': () => setWinter(!S.settings.winter?.on),
   'winter-on': () => setWinter(true),
   'winter-off': () => setWinter(false),
@@ -299,7 +345,8 @@ async function boot() {
   applyTheme();
   setLogHooks({ ctx, openProduct });
   Yard.setYardHooks({ ctx, applyTheme, onLocationChange, setWinter });
-  subscribe(() => { applyTheme(); render(); });
+  subscribe(() => { applyTheme(); render(); checkTrophies(); });
+  checkTrophies();
   wireEvents();
   switchTab(location.hash.slice(1) || 'today', { animate: false }); // weather re-renders right after boot and would cut the animation off
   document.documentElement.classList.add('ready');
