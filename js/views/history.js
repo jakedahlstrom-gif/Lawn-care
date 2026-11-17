@@ -143,7 +143,14 @@ function totalsHtml(c, year, stats) {
         <div class="stat"><div class="stat-v" data-testid="total-water">${fmtMoney(t.waterCost)}</div><div class="stat-l">Watering</div></div>
       </div>
     </div>
-    <p class="hint">${fmtNum(t.nPer1000, 2)} lb N per 1,000 sq ft applied${t.mulchCredit > 0 ? `, plus ~${fmtNum(t.mulchCredit, 2)} returned by mulched clippings` : ''}, toward a ${fmtNum(t.target, 1)} lb season target. ${fmtNum(t.hours, 1)} mowing hours${stats.miles > 0 ? ` · ≈${fmtNum(stats.miles, 1)} mi walked` : ''} · ${t.sprays} spot sprays · ${t.pulls} weeding sessions · ${fmtNum(t.waterGallons, 0)} gal watered${t.rachioRuns ? ` (${t.rachioRuns} Rachio ${t.rachioRuns === 1 ? 'run' : 'runs'})` : ''}.</p>
+    <p class="hint">${fmtNum(t.nPer1000, 2)} lb N per 1,000 sq ft applied${t.mulchCredit > 0 ? `, plus ~${fmtNum(t.mulchCredit, 2)} returned by mulched clippings` : ''}, toward a ${fmtNum(t.target, 1)} lb season target.</p>
+    <div class="tot-grid">
+      <div class="tot-stat"><span class="tot-v">${fmtNum(t.hours, 1)}</span> <span class="tot-l">Mowing hours</span></div>
+      ${stats.miles > 0 ? `<div class="tot-stat"><span class="tot-v">≈${fmtNum(stats.miles, 1)}</span> <span class="tot-l">mi walked</span></div>` : ''}
+      <div class="tot-stat"><span class="tot-v">${t.sprays}</span> <span class="tot-l">${t.sprays === 1 ? 'Spot spray' : 'Spot sprays'}</span></div>
+      <div class="tot-stat"><span class="tot-v">${t.pulls}</span> <span class="tot-l">${t.pulls === 1 ? 'Weeding session' : 'Weeding sessions'}</span></div>
+      <div class="tot-stat"><span class="tot-v">${fmtNum(t.waterGallons, 0)}</span> <span class="tot-l">gal watered</span>${t.rachioRuns > 0 ? ` <span class="tot-s">(${t.rachioRuns} Rachio ${t.rachioRuns === 1 ? 'run' : 'runs'})</span>` : ''}</div>
+    </div>
     ${monthsHtml(year, c.today)}
     ${t.products.length ? `<div class="used">
       <div class="used-h">Products used</div>

@@ -19,7 +19,7 @@ import {
   esc, fmtNum, fmtMoney, num, clone, round, getPath, dateStr, WEEKDAYS, nobreak, yearOf,
 } from '../util.js';
 
-export const APP_VERSION = '2.6.0';
+export const APP_VERSION = '2.6.1';
 const f0 = (n) => fmtNum(n, 0);
 const ui = { includePhotos: true };
 let hooks = { ctx: () => ({}), applyTheme: () => {}, onLocationChange: () => {}, setWinter: async () => {} };
@@ -29,14 +29,14 @@ export function setYardHooks(h) { hooks = { ...hooks, ...h }; }
 
 const pill = (path) => provPill(`settings:${path}`, S.settings.src[path] || 'est');
 
-function inputRow(label, path, { unit = '', kind = 'number', sub = '', placeholder = '' } = {}) {
+function inputRow(label, path, { unit = '', kind = 'number', sub = '', placeholder = '', stack = false } = {}) {
   const v = getPath(S.settings, path);
   const id = `f-${path.replace(/\./g, '-')}`;
   const numeric = kind !== 'text' && kind !== 'pref';
   const attrs = kind === 'signed'
     ? 'type="number" step="any" inputmode="decimal"'
     : kind === 'text' ? 'type="text" autocomplete="off"' : 'type="text" inputmode="decimal"';
-  return `<div class="row field-row-y${kind === 'text' ? ' is-text' : ''}">
+  return `<div class="row field-row-y${kind === 'text' ? ' is-text' : ''}${stack ? ' stack' : ''}">
     <div class="row-main"><label class="row-title" for="${id}" ${numeric ? `data-prov-key="settings:${path}"` : ''}>${label}</label>${numeric ? pill(path) : ''}${sub ? `<span class="row-sub">${sub}</span>` : ''}</div>
     <div class="input-wrap"><input id="${id}" class="row-input" ${attrs} data-setting="${path}" data-kind="${kind === 'pref' ? 'number' : kind}" value="${esc(v ?? '')}" placeholder="${esc(placeholder)}">${unit ? `<span class="unit">${unit}</span>` : ''}</div>
   </div>`;
@@ -58,14 +58,14 @@ const SECTIONS = {
         ${inputRow('Location', 'location.name', { kind: 'text' })}
         ${inputRow('Latitude', 'location.lat', { kind: 'signed' })}
         ${inputRow('Longitude', 'location.lon', { kind: 'signed' })}
-        ${inputRow('Grass', 'location.grass', { kind: 'text' })}
-        ${inputRow('Lot', 'location.lot', { kind: 'text' })}
+        ${inputRow('Grass', 'location.grass', { kind: 'text', stack: true })}
+        ${inputRow('Lot', 'location.lot', { kind: 'text', stack: true })}
       </div>
       <div class="list-card">
         ${inputRow('Non-paved area (survey)', 'location.surveyArea', { unit: 'sq ft' })}
         ${infoRow('Mowed lawn (zones)', `<span data-testid="lawn-area">${f0(lawn)} sq ft</span>`)}
         ${infoRow('Beds, easement &amp; other', `${f0(Math.max(0, survey - lawn))} sq ft`, 'Survey area minus lawn zones')}
-        ${inputRow('Notes', 'location.notes', { kind: 'text' })}
+        ${inputRow('Notes', 'location.notes', { kind: 'text', stack: true })}
       </div>${provNote}`;
     },
   },
@@ -87,7 +87,7 @@ const SECTIONS = {
     summary: () => `${S.settings.mower.model} · ${S.settings.mower.heights.length} heights`,
     render: (c) => {
       const cal = E.growthCalibration(S.logs, c.today);
-      return `<div class="list-card">${inputRow('Model', 'mower.model', { kind: 'text' })}</div>
+      return `<div class="list-card">${inputRow('Model', 'mower.model', { kind: 'text', stack: true })}</div>
       <h3 class="section-h">Cutting heights</h3>
       <div class="list-card">${S.settings.mower.heights.map((h, i) => inputRow(`Position ${i + 1}`, `mower.heights.${i}`, { unit: 'in' })).join('')}</div>
       <div class="list-card">
@@ -101,7 +101,7 @@ const SECTIONS = {
     title: 'Spreader & Clippings', icon: 'spreader',
     summary: () => `${S.settings.spreader.model} · ${S.settings.clippings === 'mulch' ? 'Mulching' : 'Bagging'}`,
     render: () => `<div class="list-card">
-      ${inputRow('Spreader', 'spreader.model', { kind: 'text' })}
+      ${inputRow('Spreader', 'spreader.model', { kind: 'text', stack: true })}
       <div class="row field-row-y col"><span class="row-main"><span class="row-title">Clippings</span><span class="row-sub">${S.settings.clippings === 'mulch' ? 'Mulching returns some nitrogen (~0.04 lb N/1,000 per mow).' : 'Bagging removes clippings and their nitrogen.'}</span></span>
         ${segmented('clippings', [['mulch', 'Mulch'], ['bag', 'Bag']], S.settings.clippings)}</div>
     </div>
@@ -549,7 +549,7 @@ export function openZoneSheet(id, onDone) {
     const heads = nonLawn ? [['drip', 'Drip'], ['spray', 'Spray'], ['rotor', 'Rotor'], ['rotary', 'Rotary']] : [['spray', 'Spray'], ['rotor', 'Rotor'], ['rotary', 'Rotary']];
     sheet.body.innerHTML = `
       <div class="list-card">
-        <div class="row field-row-y is-text"><label class="row-title" for="zf-name">Name</label>
+        <div class="row field-row-y is-text stack"><label class="row-title" for="zf-name">Name</label>
           <div class="input-wrap"><input id="zf-name" class="row-input" type="text" data-zfield="name" value="${esc(draft.name)}" placeholder="e.g., Front Beds" autocomplete="off"></div></div>
         <div class="row"><span class="row-main"><span class="row-title">Counts as lawn</span><span class="row-sub">${nonLawn ? 'Non-lawn: water cost only (beds, drip).' : 'Used for mowing, fertilizer and nitrogen math.'}</span></span>
           ${switchHtml('lawn', !nonLawn, 'Counts as lawn')}</div>
@@ -693,11 +693,11 @@ export function openProductSheet(id, { type, onDone } = {}) {
     const spray = draft.type === 'weed';
     sheet.body.innerHTML = `
       <div class="list-card">
-        <div class="row field-row-y is-text"><label class="row-title" for="pf-name">Name</label>
+        <div class="row field-row-y is-text stack"><label class="row-title" for="pf-name">Name</label>
           <div class="input-wrap"><input id="pf-name" class="row-input" type="text" data-pfield="name" value="${esc(draft.name)}" placeholder="e.g., Scotts Turf Builder Lawn Food" autocomplete="off"></div></div>
         <div class="row field-row-y is-text"><label class="row-title" for="pf-short">Short name</label>
           <div class="input-wrap"><input id="pf-short" class="row-input" type="text" data-pfield="short" value="${esc(draft.short || '')}" placeholder="e.g., Lawn Food" autocomplete="off"></div></div>
-        <div class="row field-row-y col"><span class="row-title">Type</span>${segmented('type', Object.entries(PRODUCT_TYPES).map(([k, v]) => [k, v.replace('Crabgrass preventer', 'Preventer').replace('Grub control', 'Grubs')]), draft.type)}</div>
+        <div class="row field-row-y col type-row"><span class="row-title">Type</span>${segmented('type', Object.entries(PRODUCT_TYPES).map(([k, v]) => [k, v.replace('Crabgrass preventer', 'Preventer').replace('Grub control', 'Grubs')]), draft.type)}</div>
       </div>
       ${spray ? '' : `<h3 class="section-h">Analysis (N-P-K %)</h3>
       <div class="list-card">
