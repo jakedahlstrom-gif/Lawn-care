@@ -79,7 +79,7 @@ function planHtml(c) {
   const next = all.find((f) => ['open', 'waiting', 'upcoming'].includes(f.status));
   const startOf = (f) => (f.start <= f.end ? f.start : f.ws);
   return `<section class="card plan-card" data-testid="plan-progress">
-    <div class="sec-row inner"><span class="mini-kicker">${icon('bag')}<span>Feeding plan · ${yearOf(c.today)}</span></span><button type="button" class="wrap-btn" data-action="export-ics" aria-label="Add the upcoming plan to your calendar">${icon('calAdd')}<span>Add to Calendar</span></button></div>
+    <div class="sec-row inner"><span class="mini-kicker">${icon('bag')}<span>Feeding plan · ${yearOf(c.today)}</span></span><button type="button" class="wrap-btn" data-action="export-ics" aria-label="Add the upcoming plan to your calendar">${icon('calAdd')}<span>Add</span></button></div>
     <div class="plan-top">
       <div class="plan-big"><span>${done}</span><span class="plan-of">of ${all.length} done</span></div>
       ${next ? `<div class="plan-next"><span class="plan-next-l">${next.status === 'open' ? 'Open now' : 'Next'}</span><span class="plan-next-t">${esc(next.title)}</span><span class="plan-next-d">${esc(Season.rangeText(startOf(next), next.end))}</span></div>` : ''}
@@ -97,21 +97,18 @@ export function renderCalendar(el, c) {
   const tasks = c.seasonTasks.filter((t) => showPast || !isPastTask(t, c.today));
   const hiddenCount = (c.feedings.length - feedings.length) + (c.seasonTasks.length - tasks.length);
   const fallFirst = Number(c.today.slice(5, 7)) >= 8;
-  const freeze = cond.hardFreeze ? `${fmtMonthDay(cond.hardFreeze.date)} (${f0(cond.hardFreeze.tMin)}°F)` : cond.hasWeather ? 'none in 10 days' : '–';
+  const freeze = cond.hardFreeze ? [fmtMonthDay(cond.hardFreeze.date), `${f0(cond.hardFreeze.tMin)}°F`] : cond.hasWeather ? ['None', 'in 10 days'] : ['–', ''];
   el.innerHTML = `
     <header class="page-head">
       <h1 class="large-title">Calendar</h1>
       <p class="subtitle">Kentucky bluegrass · Minnesota · ${y}</p>
     </header>
     <div class="cond-strip" aria-label="Current conditions">
-      <div class="cond"><span class="cond-l">Soil 24-h</span><span class="cond-v">${cond.soil24 != null ? `${f0(cond.soil24)}°F` : '–'}</span></div>
-      <div class="cond"><span class="cond-l">Highs, 5 days</span><span class="cond-v">${cond.hasWeather ? `${f0(cond.highs5)}°F` : '–'}</span></div>
-      <div class="cond"><span class="cond-l">Hard freeze</span><span class="cond-v">${esc(freeze)}</span></div>
+      <div class="cond"><span class="cond-l">Soil 24-h</span><span class="cond-v">${cond.soil24 != null ? `${f0(cond.soil24)}°F` : '–'}</span><span class="cond-s">average</span></div>
+      <div class="cond"><span class="cond-l">Highs</span><span class="cond-v">${cond.hasWeather ? `${f0(cond.highs5)}°F` : '–'}</span><span class="cond-s">5-day average</span></div>
+      <div class="cond"><span class="cond-l">Hard freeze</span><span class="cond-v">${esc(freeze[0])}</span><span class="cond-s">${esc(freeze[1])}</span></div>
     </div>
     ${planHtml(c)}
-    <div class="list-card toggle-card">
-      <div class="row"><span class="row-main"><span class="row-title">Show past</span><span class="row-sub">${showPast ? 'Showing everything this year' : `${hiddenCount} past ${hiddenCount === 1 ? 'item' : 'items'} hidden`}</span></span>${switchHtml('calendar.showPast', showPast, 'Show past tasks')}</div>
-    </div>
     ${fallFirst ? checklistHtml(c) : ''}
     <h2 class="section-h">Feedings <span class="section-count">Scotts lineup · 4+ weeks apart</span></h2>
     ${feedings.length ? `<div class="timeline">${feedings.map((f) => feedingCard(f, c)).join('')}</div>` : '<p class="footer-note">No more feedings this year. Next up: the crabgrass preventer in spring.</p>'}
@@ -119,7 +116,10 @@ export function renderCalendar(el, c) {
       const list = tasks.filter((t) => t.season === k);
       return list.length ? `<h2 class="section-h">${label}</h2><div class="timeline">${list.map(taskCard).join('')}</div>` : '';
     }).join('')}
-    ${fallFirst ? '' : checklistHtml(c)}`;
+    ${fallFirst ? '' : checklistHtml(c)}
+    <div class="past-row">
+      <span class="row-main"><span class="row-title">Show past</span><span class="row-sub">${showPast ? 'Showing everything this year' : `${hiddenCount} past ${hiddenCount === 1 ? 'item' : 'items'} hidden`}</span></span>${switchHtml('calendar.showPast', showPast, 'Show past tasks')}
+    </div>`;
 }
 
 /* ---------- detail sheets ---------- */
