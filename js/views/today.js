@@ -105,18 +105,23 @@ function diseaseHtml(c) {
   const pctOf = (p) => `${Math.max(3, (p / top) * 100).toFixed(1)}%`;
   const day = (x) => (x.offset === 0 ? 'Now' : WEEKDAYS[new Date(`${x.date}T12:00`).getDay()].slice(0, 2));
   const [cls, label] = now.active ? RISK[level] : ['scheduled', 'Dormant'];
+  if (!now.active) {
+    return `<section class="card disease-card is-dormant" data-testid="disease">
+    <div class="sec-row inner"><span class="mini-kicker">${icon('germ')}<span>Dollar spot risk</span></span><span class="badge badge-${cls}">${label}</span></div>
+    <p class="reason">Too ${now.tF < 50 ? 'cool' : 'hot'} for dollar spot — 5-day average ${f0(now.tF)}°F; the fungus is active at 50–95°F.</p>
+    <p class="hint">Smith–Kerns model from the last 5 days of temperature and humidity.</p>
+  </section>`;
+  }
   return `<section class="card disease-card" data-testid="disease">
     <div class="sec-row inner"><span class="mini-kicker">${icon('germ')}<span>Dollar spot risk</span></span><span class="badge badge-${cls}">${label}</span></div>
     <div class="ds-top">
-      <div class="ds-big${now.active ? '' : ' is-off'}">${now.active ? `${f0(now.p * 100)}<span>%</span>` : 'Off'}</div>
+      <div class="ds-big">${f0(now.p * 100)}<span>%</span></div>
       <div class="ds-chart" aria-hidden="true">
-        <span class="ds-line" style="bottom:${((DOLLAR_SPOT_THRESHOLD / top) * 100).toFixed(1)}%"></span>
+        <span class="ds-line" style="bottom:${((DOLLAR_SPOT_THRESHOLD / top) * 100).toFixed(1)}%"><span class="ds-line-l">${f0(DOLLAR_SPOT_THRESHOLD * 100)}%</span></span>
         ${trend.map((x) => `<span class="ds-col${x.offset === 0 ? ' is-now' : ''}${x.offset > 0 ? ' is-ahead' : ''}"><span class="ds-bar lvl-${x.active ? riskLevel(x.p) : 'off'}" style="height:${x.active ? pctOf(x.p) : '3%'}"></span><span class="ds-d">${day(x)}</span></span>`).join('')}
       </div>
     </div>
-    <p class="reason">${now.active
-      ? `5-day average ${f0(now.tF)}°F at ${f0(now.rh)}% humidity.${level === 'high' ? ' Above the 20% spray threshold — water only at dawn, never in the evening, and keep the lawn fed; dollar spot loves hungry, wet turf.' : level === 'watch' ? ' Climbing toward the 20% spray threshold — water at dawn so blades dry fast.' : ' Well under the 20% spray threshold.'}`
-      : `Too ${now.tF < 50 ? 'cool' : 'hot'} for dollar spot: the fungus is active when the 5-day average is 50–95°F (now ${f0(now.tF)}°F).`}</p>
+    <p class="reason">5-day average ${f0(now.tF)}°F at ${f0(now.rh)}% humidity.${level === 'high' ? ' Above the 20% spray threshold — water only at dawn, never in the evening, and keep the lawn fed; dollar spot loves hungry, wet turf.' : level === 'watch' ? ' Climbing toward the 20% spray threshold — water at dawn so blades dry fast.' : ' Well under the 20% spray threshold.'}</p>
     <p class="hint">Smith–Kerns model from the last 5 days of temperature and humidity; the line marks the 20% threshold.</p>
   </section>`;
 }
@@ -322,11 +327,11 @@ export function renderToday(el, c) {
       ${promptHtml(c)}
       ${timersHtml(c)}
       ${mowHtml(c, rec)}
-      ${weekHtml(week, Season.soilAlerts(c))}
-      ${diseaseHtml(c)}
       ${sectionsHtml(a)}
+      ${weekHtml(week, Season.soilAlerts(c))}
       <div class="pair">${waterCardHtml(c)}${condCardHtml(c, rain7)}</div>
       ${forecastHtml(c)}
+      ${diseaseHtml(c)}
       ${shop ? shoppingHtml(`Shopping list · ${shop.feeding.title}`, shop.items) : ''}
       ${upNextHtml(a)}
     </div>`;
