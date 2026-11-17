@@ -108,7 +108,7 @@ function diseaseHtml(c) {
   if (!now.active) {
     return `<section class="card disease-card is-dormant" data-testid="disease">
     <div class="sec-row inner"><span class="mini-kicker">${icon('germ')}<span>Dollar spot risk</span></span><span class="badge badge-${cls}">${label}</span></div>
-    <p class="reason">Too ${now.tF < 50 ? 'cool' : 'hot'} for dollar spot — 5-day average ${f0(now.tF)}°F; the fungus is active at 50–95°F.</p>
+    <p class="reason">Too ${now.tF < 50 ? 'cool' : 'hot'} for dollar spot — 5-day average ${fmtNum(now.tF, Math.abs(now.tF - 50) < 1 || Math.abs(now.tF - 95) < 1 ? 1 : 0)}°F; the fungus is active at 50–95°F.</p>
     <p class="hint">Smith–Kerns model from the last 5 days of temperature and humidity.</p>
   </section>`;
   }
